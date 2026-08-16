@@ -1,6 +1,0 @@
-{
-  "name": "Tasami OS",
-  "description": "نظام تشغيل الشركات المستقل بالذكاء الاصطناعي لعام 2026 - إدارة وتنسيق وكلاء المبيعات، التسويق والدعم تحت إشرافك المباشر.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}

@@ -1,0 +1,92 @@
+{
+  "app": {
+    "name": "KARMISH",
+    "tagline": "Your Personal AI Operating System",
+    "description": "An AI companion that understands you deeply, remembers context, manages projects, and helps build businesses."
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "executive": "Executive",
+    "business": "Business",
+    "commerce": "Commerce",
+    "sales": "Sales",
+    "brain": "Brain",
+    "growth": "Growth",
+    "agents": "Agents",
+    "settings": "Settings"
+  },
+  "common": {
+    "search": "Search...",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "create": "Create",
+    "loading": "Loading...",
+    "error": "An error occurred",
+    "noResults": "No results found"
+  },
+  "auth": {
+    "signIn": "Sign In",
+    "signUp": "Create Account",
+    "email": "Email",
+    "password": "Password",
+    "forgotPassword": "Forgot password?",
+    "noAccount": "Don't have an account?",
+    "hasAccount": "Already have an account?"
+  },
+  "dashboard": {
+    "welcome": "Welcome back",
+    "modules": "Modules",
+    "recentActivity": "Recent Activity",
+    "upcomingTasks": "Upcoming Tasks"
+  },
+  "executive": {
+    "title": "Executive Assistant",
+    "schedule": "Today's Schedule",
+    "tasks": "Tasks",
+    "goals": "Goals",
+    "reminders": "Reminders"
+  },
+  "business": {
+    "title": "Business Operator",
+    "revenue": "Revenue Overview",
+    "kpis": "KPIs",
+    "growth": "Growth Metrics"
+  },
+  "commerce": {
+    "title": "Commerce Assistant",
+    "products": "Top Products",
+    "funnel": "Sales Funnel",
+    "analytics": "Analytics"
+  },
+  "sales": {
+    "title": "AI Sales Agent",
+    "pipeline": "Pipeline",
+    "leads": "Leads",
+    "interactions": "Interactions",
+    "followUps": "Follow-ups"
+  },
+  "brain": {
+    "title": "Knowledge Brain",
+    "memories": "Memories",
+    "documents": "Documents",
+    "tags": "Tags"
+  },
+  "growth": {
+    "title": "Growth Coach",
+    "habits": "Habits",
+    "skills": "Skills",
+    "learning": "Learning Path"
+  },
+  "agents": {
+    "title": "AI Agents",
+    "selectAgent": "Select an Agent",
+    "selectAgentDesc": "Choose an AI agent to start a conversation"
+  },
+  "chat": {
+    "placeholder": "Type a message...",
+    "startConversation": "Start a conversation",
+    "askMeAnything": "Ask me anything about your business, tasks, schedule, or goals."
+  }
+}

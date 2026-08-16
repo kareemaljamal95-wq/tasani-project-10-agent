@@ -1,0 +1,33 @@
+steps:
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        gcloud run deploy tasami-os \
+          --source=. \
+          --region=me-central1 \
+          --platform=managed \
+          --allow-unauthenticated \
+          --add-cloudsql-instances=${PROJECT_ID}:me-central1:tasami-db \
+          --set-env-vars="DATABASE_URL=postgresql://postgres:${_DB_PASSWORD}@localhost:5432/tasami?schema=public" \
+          --set-env-vars="NODE_ENV=production" \
+          --set-env-vars="NEXT_PUBLIC_APP_URL=https://${_DOMAIN}" \
+          --set-secrets="GEMINI_API_KEY=gemini-api-key:latest" \
+          --set-secrets="OPENAI_API_KEY=openai-api-key:latest" \
+          --set-secrets="ANTHROPIC_API_KEY=anthropic-api-key:latest" \
+          --set-secrets="NEXTAUTH_SECRET=nextauth-secret:latest" \
+          --memory=1Gi \
+          --cpu=1 \
+          --min-instances=0 \
+          --max-instances=10 \
+          --timeout=300
+
+substitutions:
+  _DOMAIN: tasami-os.com
+  _DB_PASSWORD: changeme
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 1800s
