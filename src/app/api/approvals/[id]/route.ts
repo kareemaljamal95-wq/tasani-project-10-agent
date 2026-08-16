@@ -10,6 +10,7 @@ import {
   rejectApproval,
 } from '@/lib/approvals';
 import { handleRouteError, parseBody, rateLimit, requireUser } from '@/lib/api/guard';
+import { track } from '@/lib/analytics';
 
 /**
  * Human transitions on a single approval.
@@ -58,11 +59,13 @@ export async function POST(
     switch (body.action) {
       case 'approve': {
         const approval = await approveApproval(id, session.userId, actor);
+        track('approval_granted', { userId: session.userId, approvalId: id });
         return NextResponse.json({ approval });
       }
 
       case 'reject': {
         const approval = await rejectApproval(id, session.userId, actor, body.reason);
+        track('approval_rejected', { userId: session.userId, approvalId: id });
         return NextResponse.json({ approval });
       }
 
@@ -88,6 +91,8 @@ export async function POST(
             { status: 502 },
           );
         }
+
+        track('outreach_sent', { userId: session.userId, approvalId: id });
 
         return NextResponse.json({ approval });
       }

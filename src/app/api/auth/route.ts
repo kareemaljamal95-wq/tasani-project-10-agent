@@ -17,6 +17,7 @@ import {
   rateLimit,
 } from '@/lib/api/guard';
 import { recordAudit } from '@/lib/audit';
+import { track } from '@/lib/analytics';
 
 /**
  * Authentication.
@@ -84,6 +85,7 @@ export async function POST(req: Request) {
         actor: user.email,
       });
 
+      track('signup', { userId: user.id });
       logger.info('User registered', { userId: user.id });
 
       return NextResponse.json({

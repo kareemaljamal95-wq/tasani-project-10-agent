@@ -1,19 +1,40 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Bot } from 'lucide-react';
+import { submitAuth } from '@/lib/auth/client';
 
 export default function LoginPage() {
+  const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  // Previously this handler was a setTimeout with a `TODO: implement auth`
+  // comment — the form spun for two seconds and signed nobody in.
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    setError(null);
     setIsLoading(true);
-    // TODO: implement auth
-    setTimeout(() => setIsLoading(false), 2000);
+
+    const form = new FormData(e.currentTarget);
+
+    try {
+      await submitAuth({
+        action: 'login',
+        email: String(form.get('email') ?? ''),
+        password: String(form.get('password') ?? ''),
+      });
+
+      router.push('/dashboard');
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Sign in failed.');
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -25,31 +46,37 @@ export default function LoginPage() {
           </div>
         </div>
         <h1 className="text-2xl font-bold text-white">Welcome back</h1>
-        <p className="text-white/60 mt-2">Sign in to your KARMISH account</p>
+        <p className="text-white/60 mt-2">Sign in to your Tasami account</p>
       </div>
 
       <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl p-8">
         <form onSubmit={handleSubmit} className="space-y-4">
           <Input
             id="email"
+            name="email"
             type="email"
             label="Email"
             placeholder="you@example.com"
             autoComplete="email"
+            required
           />
           <Input
             id="password"
+            name="password"
             type="password"
             label="Password"
             placeholder="••••••••"
             autoComplete="current-password"
+            required
           />
 
-          <div className="flex items-center justify-between text-sm">
-            <label className="flex items-center gap-2 text-white/60">
-              <input type="checkbox" className="rounded border-white/10 bg-white/5" />
-              Remember me
-            </label>
+          {error && (
+            <p role="alert" className="text-sm text-red-400">
+              {error}
+            </p>
+          )}
+
+          <div className="flex items-center justify-end text-sm">
             <Link href="/forgot-password" className="text-violet-400 hover:text-violet-300">
               Forgot password?
             </Link>

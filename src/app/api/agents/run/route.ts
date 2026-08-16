@@ -6,6 +6,7 @@ import { evaluatePolicy } from '@/lib/ai/policies';
 import { runAgentDecision } from '@/lib/ai/decision';
 import { createApproval } from '@/lib/approvals';
 import { recordAudit } from '@/lib/audit';
+import { track } from '@/lib/analytics';
 import { hasAnyAIProvider } from '@/lib/env';
 import { handleRouteError, parseBody, rateLimit, requireUser } from '@/lib/api/guard';
 
@@ -120,6 +121,17 @@ export async function POST(req: Request) {
         decision,
         channel: body.channel,
         recipient: body.recipient,
+      });
+
+      track('outreach_generated', {
+        userId: session.userId,
+        agentId: body.agentId,
+        approvalId: approval.id,
+      });
+      track('approval_requested', {
+        userId: session.userId,
+        agentId: body.agentId,
+        approvalId: approval.id,
       });
 
       return NextResponse.json(
