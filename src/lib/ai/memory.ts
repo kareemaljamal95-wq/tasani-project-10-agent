@@ -87,10 +87,16 @@ export class MemorySystem {
     return memories.map(this.toEntry);
   }
 
-  async delete(id: string): Promise<void> {
-    await prisma.memory.delete({
-      where: { id },
+  /**
+   * Scoped by userId as well as id: deleting by id alone let any caller
+   * remove another tenant's memory. Returns false when nothing matched.
+   */
+  async delete(id: string): Promise<boolean> {
+    const result = await prisma.memory.deleteMany({
+      where: { id, userId: this.userId },
     });
+
+    return result.count > 0;
   }
 
   private toEntry(memory: any): MemoryEntry {

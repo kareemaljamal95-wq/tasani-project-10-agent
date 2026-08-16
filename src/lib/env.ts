@@ -1,0 +1,79 @@
+import { z } from 'zod';
+
+/**
+ * Environment contract, validated on first access.
+ *
+ * Fail-closed: a missing secret stops the process rather than silently
+ * degrading into an unauthenticated or unpersisted mode.
+ */
+const envSchema = z.object({
+  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+
+  DATABASE_URL: z
+    .string()
+    .min(1, 'DATABASE_URL is required — users, approvals and audit logs are persisted.'),
+
+  /**
+   * Signing key for session JWTs. Rotating it invalidates every live session,
+   * which is the intended emergency logout.
+   */
+  AUTH_SECRET: z
+    .string()
+    .min(32, 'AUTH_SECRET must be at least 32 characters. Generate with: openssl rand -hex 32'),
+
+  SESSION_TTL_HOURS: z.coerce.number().int().positive().default(24 * 7),
+
+  OPENAI_API_KEY: z.string().min(1).optional(),
+  ANTHROPIC_API_KEY: z.string().min(1).optional(),
+  GEMINI_API_KEY: z.string().min(1).optional(),
+
+  RATE_LIMIT_MAX: z.coerce.number().int().positive().default(60),
+  RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
+  AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
+
+  /**
+   * Outbound delivery stays off until a transport is configured, so an
+   * APPROVED item can never silently become SENT.
+   */
+  OUTREACH_TRANSPORT: z.enum(['none', 'smtp']).default('none'),
+  SMTP_URL: z.string().optional(),
+  OUTREACH_FROM: z.string().optional(),
+
+  NEXT_PUBLIC_APP_URL: z.string().url().default('http://localhost:3000'),
+});
+
+export type Env = z.infer<typeof envSchema>;
+
+let cached: Env | null = null;
+
+export function env(): Env {
+  if (cached) return cached;
+
+  const parsed = envSchema.safeParse(process.env);
+
+  if (!parsed.success) {
+    const issues = parsed.error.issues
+      .map((issue) => `  - ${issue.path.join('.') || '(root)'}: ${issue.message}`)
+      .join('\n');
+
+    throw new Error(
+      `Invalid environment configuration:\n${issues}\n\n` +
+        'Copy .env.example to .env and fill in the required values.',
+    );
+  }
+
+  const value = parsed.data;
+
+  if (value.OUTREACH_TRANSPORT === 'smtp' && !value.SMTP_URL) {
+    throw new Error('OUTREACH_TRANSPORT=smtp requires SMTP_URL to be set.');
+  }
+
+  cached = value;
+  return value;
+}
+
+/** True when at least one model provider is configured. */
+export function hasAnyAIProvider(): boolean {
+  const e = env();
+  return Boolean(e.OPENAI_API_KEY || e.ANTHROPIC_API_KEY || e.GEMINI_API_KEY);
+}

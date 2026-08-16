@@ -1,9 +1,21 @@
 import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import Anthropic from '@anthropic-ai/sdk';
+import { logger } from '@/lib/logger';
 
 export type AIProvider = 'openai' | 'gemini' | 'anthropic';
-export type ModelName = 'gpt-4o' | 'gpt-4o-mini' | 'gpt-3.5-turbo' | 'claude-3-sonnet' | 'claude-3-haiku' | 'gemini-pro';
+
+/** Raised when a provider call fails, so callers can return a real 502. */
+export class AIProviderError extends Error {
+  constructor(
+    readonly provider: AIProvider,
+    readonly model: string,
+    readonly cause: unknown,
+  ) {
+    super(`AI provider ${provider} failed for model ${model}.`);
+    this.name = 'AIProviderError';
+  }
+}
 
 export interface Message {
   role: 'user' | 'assistant' | 'system';
@@ -119,11 +131,15 @@ export async function generateAIResponse(params: {
         throw new Error(`Unknown provider: ${provider}`);
     }
   } catch (error) {
-    console.error(`AI provider error (${provider}/${model}):`, error);
-    return {
-      content: `I encountered an error processing your request. Please check your API keys and try again.`,
-      model,
+    // Previously this returned a cheerful sentence as though it were the
+    // model's answer, so an outage, a bad key or a quota error was stored in
+    // the conversation as a successful assistant reply. Failures now surface.
+    logger.error('AI provider call failed', {
       provider,
-    };
+      model,
+      error: error instanceof Error ? error.message : String(error),
+    });
+
+    throw new AIProviderError(provider, model, error);
   }
 }

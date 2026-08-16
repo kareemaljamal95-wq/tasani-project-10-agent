@@ -1,50 +1,117 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
+import { AGENT_DEFAULTS } from '@/lib/ai/agent-defaults';
+import {
+  clientIp,
+  handleRouteError,
+  parseBody,
+  rateLimit,
+  requireUser,
+} from '@/lib/api/guard';
 
-export async function GET() {
+/**
+ * Agent configuration.
+ *
+ * The previous version read a hardcoded `demo-user`, so every account shared
+ * one workforce, and its PATCH accepted an arbitrary body keyed only by `id` —
+ * which allowed rewriting any other tenant's `systemPrompt`, the most direct
+ * prompt-injection path in the product.
+ */
+
+const updateAgentSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1).max(120).optional(),
+  description: z.string().max(1000).nullable().optional(),
+  model: z.string().min(1).max(100).optional(),
+  temperature: z.number().min(0).max(2).optional(),
+  isEnabled: z.boolean().optional(),
+});
+
+/** Ensures the caller has their default workforce, without duplicating rows. */
+async function ensureDefaultAgents(userId: string) {
+  // Relies on @@unique([userId, type]); concurrent requests converge instead
+  // of each inserting a full set of eight.
+  await prisma.agentConfig.createMany({
+    data: AGENT_DEFAULTS.map((agent) => ({
+      userId,
+      type: agent.type,
+      name: agent.name,
+      description: agent.description,
+      systemPrompt: agent.systemPrompt,
+      model: agent.model,
+      temperature: agent.temperature,
+      isEnabled: true,
+    })),
+    skipDuplicates: true,
+  });
+}
+
+export async function GET(req: Request) {
   try {
-    const userId = 'demo-user';
-    let agents = await prisma.agentConfig.findMany({
-      where: { userId },
+    const session = await requireUser();
+    rateLimit(`agents:${session.userId}:${clientIp(req)}`);
+
+    await ensureDefaultAgents(session.userId);
+
+    const agents = await prisma.agentConfig.findMany({
+      where: { userId: session.userId },
       orderBy: { createdAt: 'asc' },
+      // systemPrompt is deliberately not returned: it is server-side
+      // configuration, and exposing it hands an attacker the exact text to
+      // craft an override against.
+      select: {
+        id: true,
+        type: true,
+        name: true,
+        description: true,
+        model: true,
+        temperature: true,
+        isEnabled: true,
+        createdAt: true,
+        updatedAt: true,
+      },
     });
-
-    if (agents.length === 0) {
-      const defaultAgents = [
-        { type: 'CEO', name: 'CEO Agent', description: 'Strategic business leadership and decision making', systemPrompt: 'You are the CEO Agent. Provide strategic leadership and make high-level decisions.', model: 'gpt-4o', temperature: 0.7 },
-        { type: 'SALES', name: 'Sales Agent', description: 'Lead qualification and closing strategies', systemPrompt: 'You are the Sales Agent. Qualify leads and close deals effectively.', model: 'gpt-4o', temperature: 0.7 },
-        { type: 'MARKETING', name: 'Marketing Agent', description: 'Market research and campaign management', systemPrompt: 'You are the Marketing Agent. Drive marketing strategy and campaigns.', model: 'gpt-4o', temperature: 0.7 },
-        { type: 'RESEARCH', name: 'Research Agent', description: 'Deep research and knowledge synthesis', systemPrompt: 'You are the Research Agent. Conduct thorough research and synthesize findings.', model: 'claude-3-sonnet', temperature: 0.5 },
-        { type: 'FINANCE', name: 'Finance Agent', description: 'Financial analysis and revenue optimization', systemPrompt: 'You are the Finance Agent. Analyze finances and optimize revenue.', model: 'gpt-4o', temperature: 0.5 },
-        { type: 'OPERATIONS', name: 'Operations Agent', description: 'Process optimization and workflow management', systemPrompt: 'You are the Operations Agent. Optimize workflows and operations.', model: 'gpt-4o-mini', temperature: 0.6 },
-        { type: 'FASHION', name: 'Fashion Agent', description: 'Fashion advice and inventory management', systemPrompt: 'You are the Fashion Agent. Provide fashion expertise and manage inventory.', model: 'gpt-4o-mini', temperature: 0.8 },
-        { type: 'CUSTOMER_SUPPORT', name: 'Support Agent', description: 'Customer support and issue resolution', systemPrompt: 'You are the Support Agent. Resolve customer issues with empathy and efficiency.', model: 'gpt-4o-mini', temperature: 0.5 },
-      ];
-
-      for (const agent of defaultAgents) {
-        const created = await prisma.agentConfig.create({
-          data: { ...agent, userId, isEnabled: true },
-        });
-        agents.push(created);
-      }
-    }
 
     return NextResponse.json({ agents });
   } catch (error) {
-    console.error('Agents API error:', error);
-    return NextResponse.json({ error: 'Failed to fetch agents' }, { status: 500 });
+    return handleRouteError(error, 'GET /api/agents');
   }
 }
 
-export async function PATCH(req: NextRequest) {
+export async function PATCH(req: Request) {
   try {
-    const { id, ...updates } = await req.json();
-    const agent = await prisma.agentConfig.update({
-      where: { id },
+    const session = await requireUser();
+    rateLimit(`agents:${session.userId}:${clientIp(req)}`);
+
+    const { id, ...updates } = await parseBody(req, updateAgentSchema);
+
+    // systemPrompt is not in the accepted field set, so it cannot be changed
+    // through this route at all.
+    const result = await prisma.agentConfig.updateMany({
+      where: { id, userId: session.userId },
       data: updates,
     });
+
+    if (result.count === 0) {
+      return NextResponse.json({ error: 'Agent not found.' }, { status: 404 });
+    }
+
+    const agent = await prisma.agentConfig.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        type: true,
+        name: true,
+        description: true,
+        model: true,
+        temperature: true,
+        isEnabled: true,
+      },
+    });
+
     return NextResponse.json({ agent });
   } catch (error) {
-    return NextResponse.json({ error: 'Failed to update agent' }, { status: 500 });
+    return handleRouteError(error, 'PATCH /api/agents');
   }
 }

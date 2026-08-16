@@ -1,58 +1,81 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
+import { z } from 'zod';
 import { AgentSystem } from '@/lib/ai/agent-system';
+import { AGENT_TYPES } from '@/lib/ai/agent-defaults';
 import { prisma } from '@/lib/prisma';
+import { hasAnyAIProvider } from '@/lib/env';
+import {
+  ConversationAccessError,
+  resolveConversation,
+  touchConversation,
+} from '@/lib/conversations';
+import { handleRouteError, parseBody, rateLimit, requireUser } from '@/lib/api/guard';
 
-export async function POST(req: NextRequest) {
+const agentChatSchema = z.object({
+  // Constrained to known agent types so the value cannot be used to select an
+  // arbitrary prompt or model.
+  agentType: z.enum(AGENT_TYPES as [string, ...string[]]),
+  message: z.string().min(1).max(20_000),
+  conversationId: z.string().min(1).optional(),
+});
+
+export async function POST(req: Request) {
   try {
-    const { agentType, message, conversationId } = await req.json();
+    const session = await requireUser();
+    rateLimit(`agent-chat:${session.userId}`, 20);
 
-    if (!agentType || !message) {
-      return NextResponse.json({ error: 'agentType and message are required' }, { status: 400 });
-    }
-
-    const userId = 'demo-user';
-    const agentSystem = new AgentSystem(userId);
-
-    let convId = conversationId;
-    if (!convId) {
-      const conversation = await prisma.conversation.create({
-        data: {
-          title: `[${agentType}] ${message.slice(0, 100)}`,
-          userId,
-          agentType,
-          isActive: true,
+    if (!hasAnyAIProvider()) {
+      return NextResponse.json(
+        {
+          error:
+            'No AI provider is configured. Set OPENAI_API_KEY, ANTHROPIC_API_KEY or GEMINI_API_KEY.',
         },
-      });
-      convId = conversation.id;
+        { status: 503 },
+      );
     }
+
+    const body = await parseBody(req, agentChatSchema);
+
+    const convId = await resolveConversation({
+      userId: session.userId,
+      conversationId: body.conversationId,
+      title: `[${body.agentType}] ${body.message}`,
+      agentType: body.agentType,
+    });
 
     await prisma.message.create({
       data: {
-        content: message,
+        content: body.message,
         role: 'user',
         conversationId: convId,
-        agentId: agentType,
+        agentId: body.agentType,
       },
     });
 
-    const response = await agentSystem.chat(agentType, message, convId);
+    const response = await new AgentSystem(session.userId).chat(
+      body.agentType,
+      body.message,
+      convId,
+    );
 
     await prisma.message.create({
       data: {
         content: response.content,
         role: 'assistant',
         conversationId: convId,
-        agentId: agentType,
-        metadata: response.metadata as any,
+        agentId: body.agentType,
+        metadata: response.metadata,
+        model: response.metadata?.model,
       },
     });
 
-    return NextResponse.json({
-      ...response,
-      conversationId: convId,
-    });
+    await touchConversation(convId);
+
+    return NextResponse.json({ ...response, conversationId: convId });
   } catch (error) {
-    console.error('Agent chat error:', error);
-    return NextResponse.json({ error: 'Failed to process agent chat' }, { status: 500 });
+    if (error instanceof ConversationAccessError) {
+      return NextResponse.json({ error: error.message }, { status: 404 });
+    }
+    return handleRouteError(error, 'POST /api/agents/chat');
   }
 }
