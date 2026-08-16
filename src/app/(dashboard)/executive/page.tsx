@@ -1,94 +1,150 @@
-import { Calendar, ListTodo, Target, Clock } from 'lucide-react';
+import { redirect } from 'next/navigation';
+import { Calendar, ListTodo, Target } from 'lucide-react';
+import { prisma } from '@/lib/prisma';
+import { getSession } from '@/lib/auth/session';
 
-export default function ExecutivePage() {
+export const dynamic = 'force-dynamic';
+
+export const metadata = { title: 'المساعد التنفيذي' };
+
+/**
+ * Executive assistant.
+ *
+ * The schedule was a string array ("9:00 AM - Team Standup"), the goals were
+ * hardcoded percentages. All three panels now read the CalendarEvent, Task and
+ * Goal models for the signed-in account.
+ */
+export default async function ExecutivePage() {
+  const session = await getSession();
+  if (!session) redirect('/login');
+
+  const userId = session.userId;
+
+  const dayStart = new Date();
+  dayStart.setHours(0, 0, 0, 0);
+  const dayEnd = new Date(dayStart);
+  dayEnd.setDate(dayEnd.getDate() + 1);
+
+  const [events, tasks, goals] = await Promise.all([
+    prisma.calendarEvent.findMany({
+      where: { userId, startDate: { gte: dayStart, lt: dayEnd } },
+      orderBy: { startDate: 'asc' },
+    }),
+    prisma.task.findMany({
+      where: { userId, status: { in: ['PENDING', 'IN_PROGRESS'] } },
+      orderBy: [{ dueDate: 'asc' }, { createdAt: 'desc' }],
+      take: 10,
+    }),
+    prisma.goal.findMany({
+      where: { userId, status: 'ACTIVE' },
+      orderBy: { createdAt: 'desc' },
+      take: 6,
+    }),
+  ]);
+
   return (
     <div className="space-y-8 animate-in">
       <div>
-        <h1 className="text-3xl font-bold text-white">Executive Assistant</h1>
-        <p className="text-white/60 mt-1">Manage your calendar, tasks, goals, and daily planning</p>
+        <h1 className="text-3xl font-bold text-white">المساعد التنفيذي</h1>
+        <p className="text-white/60 mt-1">جدولك ومهامك وأهدافك في مكان واحد</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
-          <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-                <Calendar className="h-5 w-5 text-violet-400" />
-                Today&apos;s Schedule
-              </h2>
-            </div>
-            <div className="space-y-3">
-              {['9:00 AM - Team Standup', '10:30 AM - Strategy Review', '2:00 PM - Client Call', '4:00 PM - Planning Session'].map((event, i) => (
-                <div key={i} className="flex items-center gap-4 p-3 rounded-xl bg-white/5 hover:bg-white/10 transition-all">
-                  <div className="h-2 w-2 rounded-full bg-violet-400" />
-                  <span className="text-sm text-white/80">{event}</span>
-                </div>
-              ))}
-            </div>
-          </div>
+          <section className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl p-6">
+            <h2 className="text-lg font-semibold text-white flex items-center gap-2 mb-4">
+              <Calendar className="h-5 w-5 text-violet-400" />
+              جدول اليوم
+            </h2>
 
-          <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-                <ListTodo className="h-5 w-5 text-violet-400" />
-                Tasks
-              </h2>
-            </div>
-            <div className="space-y-2">
-              {['Review quarterly report', 'Prepare investor deck', 'Update product roadmap', 'Review team OKRs'].map((task, i) => (
-                <div key={i} className="flex items-center gap-3 p-2.5 rounded-lg hover:bg-white/5 transition-all">
-                  <input type="checkbox" className="rounded border-white/10 bg-white/5" />
-                  <span className="text-sm text-white/70">{task}</span>
-                  <span className={`ml-auto text-xs px-2 py-0.5 rounded-full ${i < 2 ? 'bg-red-500/20 text-red-300' : 'bg-yellow-500/20 text-yellow-300'}`}>
-                    {i < 2 ? 'Urgent' : 'High'}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
+            {events.length === 0 ? (
+              <p className="text-white/50 text-sm">لا توجد مواعيد اليوم.</p>
+            ) : (
+              <ul className="space-y-3">
+                {events.map((event) => (
+                  <li
+                    key={event.id}
+                    className="flex items-center gap-4 p-3 rounded-xl bg-white/5"
+                  >
+                    <div className="h-2 w-2 rounded-full bg-violet-400 shrink-0" />
+                    <span className="text-sm text-white/80">
+                      {event.isAllDay
+                        ? 'طوال اليوم'
+                        : event.startDate.toLocaleTimeString('ar', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}{' '}
+                      — {event.title}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl p-6">
+            <h2 className="text-lg font-semibold text-white flex items-center gap-2 mb-4">
+              <ListTodo className="h-5 w-5 text-blue-400" />
+              المهام المفتوحة
+            </h2>
+
+            {tasks.length === 0 ? (
+              <p className="text-white/50 text-sm">لا توجد مهام مفتوحة.</p>
+            ) : (
+              <ul className="space-y-2">
+                {tasks.map((task) => (
+                  <li
+                    key={task.id}
+                    className="flex items-center justify-between gap-4 p-3 rounded-xl bg-white/5"
+                  >
+                    <span className="text-sm text-white/80 truncate">
+                      {task.title}
+                    </span>
+                    <span className="text-xs text-white/35 shrink-0">
+                      {task.priority}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
         </div>
 
-        <div className="space-y-6">
-          <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-                <Target className="h-5 w-5 text-violet-400" />
-                Goals
-              </h2>
-            </div>
-            <div className="space-y-4">
-              {[
-                { name: 'Q2 Revenue Target', progress: 65 },
-                { name: 'Product Launch', progress: 40 },
-                { name: 'Team Expansion', progress: 80 },
-              ].map((goal) => (
-                <div key={goal.name}>
-                  <div className="flex justify-between text-sm mb-1">
-                    <span className="text-white/80">{goal.name}</span>
-                    <span className="text-white/40">{goal.progress}%</span>
-                  </div>
-                  <div className="h-2 rounded-full bg-white/5 overflow-hidden">
-                    <div className="h-full rounded-full bg-gradient-to-r from-violet-600 to-purple-600 transition-all" style={{ width: `${goal.progress}%` }} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+        <section className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl p-6 h-fit">
+          <h2 className="text-lg font-semibold text-white flex items-center gap-2 mb-4">
+            <Target className="h-5 w-5 text-green-400" />
+            الأهداف النشطة
+          </h2>
 
-          <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl p-6">
-            <div className="flex items-center gap-2 mb-4">
-              <Clock className="h-5 w-5 text-violet-400" />
-              <h2 className="text-lg font-semibold text-white">Reminders</h2>
-            </div>
-            <div className="space-y-2">
-              {['Review budget at 3pm', 'Send weekly report', 'Prepare for tomorrow'].map((r, i) => (
-                <div key={i} className="p-2.5 rounded-lg bg-white/5 text-sm text-white/70">
-                  {r}
-                </div>
+          {goals.length === 0 ? (
+            <p className="text-white/50 text-sm">لا توجد أهداف نشطة.</p>
+          ) : (
+            <ul className="space-y-4">
+              {goals.map((goal) => (
+                <li key={goal.id}>
+                  <div className="flex justify-between text-sm mb-1.5">
+                    <span className="text-white/80 truncate">{goal.title}</span>
+                    <span className="text-white/40 shrink-0">
+                      {goal.progress}%
+                    </span>
+                  </div>
+                  <div
+                    className="h-1.5 rounded-full bg-white/10 overflow-hidden"
+                    role="progressbar"
+                    aria-valuenow={goal.progress}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                  >
+                    <div
+                      className="h-full rounded-full bg-green-400"
+                      style={{ width: `${Math.min(goal.progress, 100)}%` }}
+                    />
+                  </div>
+                </li>
               ))}
-            </div>
-          </div>
-        </div>
+            </ul>
+          )}
+        </section>
       </div>
     </div>
   );
