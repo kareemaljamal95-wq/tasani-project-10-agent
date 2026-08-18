@@ -27,6 +27,12 @@ const envSchema = z.object({
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
   GEMINI_API_KEY: z.string().min(1).optional(),
 
+  /**
+   * Credential for the unattended automation worker. Without it the scheduled
+   * path is closed; only a signed-in session can drive automation.
+   */
+  WORKER_API_KEY: z.string().min(32).optional(),
+
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(60),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
   AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
@@ -72,8 +78,18 @@ export function env(): Env {
   return value;
 }
 
-/** True when at least one model provider is configured. */
+/**
+ * True when at least one model provider is configured.
+ *
+ * Reads process.env directly rather than the validated cache. Provider
+ * presence is the one setting that legitimately differs between a boot and a
+ * later check (a key added by a platform secret rotation, or swapped in a
+ * test), and reading through the cache would report a stale answer.
+ */
 export function hasAnyAIProvider(): boolean {
-  const e = env();
-  return Boolean(e.OPENAI_API_KEY || e.ANTHROPIC_API_KEY || e.GEMINI_API_KEY);
+  return Boolean(
+    process.env.OPENAI_API_KEY ||
+      process.env.ANTHROPIC_API_KEY ||
+      process.env.GEMINI_API_KEY,
+  );
 }

@@ -70,6 +70,7 @@ export interface CreateApprovalInput {
   decision: AgentDecision;
   channel?: string;
   recipient?: string;
+  leadId?: string;
 }
 
 export async function createApproval(input: CreateApprovalInput): Promise<Approval> {
@@ -82,6 +83,7 @@ export async function createApproval(input: CreateApprovalInput): Promise<Approv
       decision: input.decision as unknown as Prisma.InputJsonValue,
       channel: input.channel ?? null,
       recipient: input.recipient ?? null,
+      leadId: input.leadId ?? null,
       status: ApprovalStatus.PENDING,
     },
   });

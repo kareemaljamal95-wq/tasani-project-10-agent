@@ -3,6 +3,7 @@ import { Sidebar } from '@/components/layout/sidebar';
 import { Header } from '@/components/layout/header';
 import { MobileNav } from '@/components/layout/mobile-nav';
 import { getSession } from '@/lib/auth/session';
+import { prisma } from '@/lib/prisma';
 
 /**
  * Server-side gate for the whole dashboard group.
@@ -18,6 +19,16 @@ export default async function DashboardLayout({
   const session = await getSession();
 
   if (!session) redirect('/login');
+
+  // Unfinished accounts are sent to setup before any dashboard surface loads.
+  // Onboarding lives in the (setup) group, outside this layout, so this
+  // redirect cannot loop back into itself.
+  const user = await prisma.user.findUnique({
+    where: { id: session.userId },
+    select: { onboardingCompletedAt: true },
+  });
+
+  if (user && !user.onboardingCompletedAt) redirect('/onboarding');
 
   return (
     <div className="min-h-screen bg-gray-950">

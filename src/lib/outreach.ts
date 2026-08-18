@@ -82,3 +82,44 @@ export async function dispatchOutbound(
 export function isOutreachConfigured(): boolean {
   return env().OUTREACH_TRANSPORT !== 'none';
 }
+
+/**
+ * Password-reset delivery.
+ *
+ * Uses the same SMTP transport as outreach. When no transport is configured
+ * this logs that delivery was skipped and returns without throwing: a reset
+ * request must not 500 on a development install, and the account state (the
+ * stored token) is already correct. The reset URL is logged only outside
+ * production, and the token itself never reaches the audit trail.
+ */
+export async function sendPasswordResetEmail(params: {
+  to: string;
+  resetUrl: string;
+}): Promise<{ delivered: boolean }> {
+  const config = env();
+
+  if (config.OUTREACH_TRANSPORT === 'none' || !config.OUTREACH_FROM) {
+    logger.warn('Password reset email not sent: no transport configured', {
+      hasTransport: config.OUTREACH_TRANSPORT !== 'none',
+    });
+
+    if (config.NODE_ENV !== 'production') {
+      // Development convenience only. Never enabled in production, where this
+      // line would put a working credential in the log.
+      logger.info('Password reset link (development only)', {
+        resetUrl: params.resetUrl,
+      });
+    }
+
+    return { delivered: false };
+  }
+
+  await smtpTransporter().sendMail({
+    from: config.OUTREACH_FROM,
+    to: params.to,
+    subject: 'إعادة تعيين كلمة المرور — Tasami',
+    text: `لإعادة تعيين كلمة المرور، افتح الرابط التالي خلال 30 دقيقة:\n\n${params.resetUrl}\n\nإذا لم تطلب ذلك، تجاهل هذه الرسالة.`,
+  });
+
+  return { delivered: true };
+}

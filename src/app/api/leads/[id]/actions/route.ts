@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { AGENT_TYPES } from '@/lib/ai/agent-defaults';
+import { getLead, LeadNotFoundError } from '@/lib/leads';
 import {
   executeAgent,
   ProviderUnavailableError,
@@ -13,42 +14,42 @@ import {
 } from '@/lib/api/guard';
 
 /**
- * Manual agent execution.
+ * Runs an agent against a lead.
  *
- * The route is now a thin shell over `executeAgent`, which automation calls
- * too. Keeping one implementation is what guarantees a scheduled run and a
- * button click get identical policy evaluation and the same approval gate.
+ * Reuses `executeAgent`, so a lead action is policy-checked, gated and audited
+ * exactly like any other run — there is no lead-specific approval concept.
+ * Ownership is confirmed by loading the lead through the scoped service first,
+ * so a foreign lead id 404s before any agent work starts.
  */
-const runSchema = z.object({
-  agentId: z.enum(AGENT_TYPES as [string, ...string[]]),
+const actionSchema = z.object({
+  agentType: z.enum(AGENT_TYPES as [string, ...string[]]),
   objective: z.string().min(5).max(4000),
   amountUsd: z.number().nonnegative().max(1_000_000).optional(),
-  channel: z.string().max(60).optional(),
-  recipient: z.string().email().max(320).optional(),
-  leadId: z.string().min(1).optional(),
-  context: z.record(z.string(), z.unknown()).default({}),
 });
 
-export async function POST(req: Request) {
+export async function POST(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
   try {
     const session = await requireUser();
+    const { id } = await params;
 
-    // Shared limiter: agent runs cost provider spend, so the budget must hold
-    // across replicas rather than per process.
-    await rateLimitShared(`agent-run:${session.userId}`, 20);
+    await rateLimitShared(`lead-action:${session.userId}`, 20);
 
-    const body = await parseBody(req, runSchema);
+    const lead = await getLead(id, session.userId);
+    const body = await parseBody(req, actionSchema);
 
     const result = await executeAgent({
       userId: session.userId,
       actor: session.email,
-      agentId: body.agentId,
+      agentId: body.agentType,
       objective: body.objective,
       amountUsd: body.amountUsd,
-      channel: body.channel,
-      recipient: body.recipient,
-      leadId: body.leadId,
-      context: body.context ?? {},
+      leadId: lead.id,
+      recipient: lead.email ?? undefined,
+      channel: lead.email ? 'email' : undefined,
+      context: { leadStatus: lead.status, companyName: lead.companyName },
     });
 
     if (result.status === 'blocked') {
@@ -63,7 +64,6 @@ export async function POST(req: Request) {
         {
           ok: true,
           status: 'approval_required',
-          policy: { reason: result.policyReason },
           approval: { id: result.approvalId, decision: result.decision },
         },
         { status: 202 },
@@ -76,9 +76,12 @@ export async function POST(req: Request) {
       decision: result.decision,
     });
   } catch (error) {
+    if (error instanceof LeadNotFoundError) {
+      return NextResponse.json({ error: error.message }, { status: 404 });
+    }
     if (error instanceof ProviderUnavailableError) {
       return NextResponse.json({ error: error.message }, { status: 503 });
     }
-    return handleRouteError(error, 'POST /api/agents/run');
+    return handleRouteError(error, 'POST /api/leads/[id]/actions');
   }
 }

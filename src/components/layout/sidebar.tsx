@@ -3,13 +3,14 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Bot, Brain, Calendar, TrendingUp, Briefcase, ShoppingCart, Sparkles, LayoutDashboard, ChevronLeft, ShieldCheck, X } from 'lucide-react';
+import { Bot, Brain, Calendar, TrendingUp, Briefcase, ShoppingCart, Sparkles, LayoutDashboard, ChevronLeft, ShieldCheck, Users, X } from 'lucide-react';
 
 const navItems = [
   { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   // Sits directly below the dashboard: it is the queue the owner is expected
   // to work through, and nothing goes out until they do.
   { href: '/approvals', icon: ShieldCheck, label: 'Approvals' },
+  { href: '/leads', icon: Users, label: 'Leads' },
   { href: '/executive', icon: Calendar, label: 'Executive' },
   { href: '/business', icon: Briefcase, label: 'Business' },
   { href: '/commerce', icon: ShoppingCart, label: 'Commerce' },

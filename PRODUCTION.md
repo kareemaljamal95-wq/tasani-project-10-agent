@@ -8,12 +8,54 @@ exercised against a running instance and a real PostgreSQL database.
 
 ```bash
 cp .env.example .env          # then fill in DATABASE_URL and AUTH_SECRET
-openssl rand -hex 32          # value for AUTH_SECRET
+openssl rand -hex 32          # value for AUTH_SECRET (and WORKER_API_KEY)
 
 npm install
 npx prisma migrate deploy     # applies the committed migration history
 npm run dev
 ```
+
+### Commands
+
+```bash
+npm run dev        # development server
+npm run typecheck  # tsc --noEmit
+npm run lint       # eslint (Next 16 removed `next lint`)
+npm run build      # production build; fails on type errors
+npm start          # serve the production build
+npm test           # vitest — needs DATABASE_URL on a throwaway database
+npm run worker     # standalone automation worker (optional; see Automation)
+```
+
+The test suite truncates tables, so point `DATABASE_URL` at a scratch
+database when running it:
+
+```bash
+createdb tasami_test
+DATABASE_URL="postgresql://…/tasami_test" npx prisma migrate deploy
+DATABASE_URL="postgresql://…/tasami_test" npm test
+```
+
+## Automation
+
+Triggers enqueue jobs; a worker drains them and calls the same `executeAgent`
+a person's click calls, so automated runs inherit policy evaluation, the
+approval gate and the audit trail. An automated run can create a PENDING
+approval and nothing more — it cannot send.
+
+Two ways to run the worker, both the same code path:
+
+```bash
+# 1. scheduled HTTP call (platform cron, Cloud Scheduler, any timer)
+curl -X POST https://your-host/api/automation/run \
+  -H "x-worker-key: $WORKER_API_KEY"
+
+# 2. long-running process
+npm run worker
+```
+
+Without `WORKER_API_KEY` the unattended path is closed — a signed-in session
+can still drive automation for its own account, but nothing runs unattended.
 
 The app refuses to start with an invalid environment rather than degrading
 into an insecure mode. `AUTH_SECRET` under 32 characters, or a missing
@@ -51,6 +93,18 @@ green check.
 - Audit rows for every auth event, approval transition and policy block, with
   the acting user recorded and payloads redacted.
 - Security headers, `robots.txt` and `sitemap.xml` served in production.
+- Onboarding gates the dashboard for a new account, is resumable mid-flow, and
+  redirects to the dashboard once complete rather than running again.
+- Settings load and persist across a reload, and reject an unknown model id.
+- The lead workflow: create, duplicate-email rejection, status change with its
+  own activity entry, and an agent action recorded against the lead.
+- Automation end to end: a trigger enqueues a job, the worker claims and runs
+  it, policy evaluates, and the run is written to `AgentRun` with its `jobId`
+  and to the audit log with `automation` as the actor. Re-evaluating the same
+  trigger the same day enqueues nothing.
+- 38 automated tests over the execution outcomes, tenant isolation, the
+  approval state machine, the lead workflow, automation idempotency, model
+  validation, password reset and shared rate limiting.
 
 ## Known gaps
 
@@ -59,34 +113,46 @@ approved message cannot leave. Set `OUTREACH_TRANSPORT=smtp` with `SMTP_URL`
 and `OUTREACH_FROM` to enable it. This is deliberate: an unconfigured install
 cannot silently send.
 
-**Rate limiting is in-process.** The fixed-window counter lives in one
-process's memory, so behind more than one replica each instance enforces its
-own budget. Move it to Redis before scaling horizontally.
+**Rate limiting is split by sensitivity.** Sensitive endpoints — auth,
+password reset, agent execution, lead writes and lead actions — count in
+Postgres (`RateLimitCounter`), so the budget holds across replicas. Read-heavy
+endpoints still use an in-process counter, where a brief overshoot costs
+nothing. Redis is the upgrade path once a database write per request becomes
+too expensive; `src/lib/rate-limit.ts` is the only file that would change.
 
 **Sessions cannot be revoked individually.** They are stateless JWTs; rotating
 `AUTH_SECRET` invalidates all of them at once. Per-session revocation needs a
 session table.
 
-**Password reset does not exist.** `/login` links to `/forgot-password`, which
-has no route behind it.
+**Password reset needs SMTP to deliver.** The application flow is complete —
+token issue, hash-only storage, 30-minute expiry, single use, and the same
+response for known and unknown addresses so it cannot enumerate accounts. With
+no transport configured the token is still created correctly but no mail goes
+out; outside production the link is logged for development, never in
+production.
 
-**No automated tests.** Everything above was verified by hand against a live
-instance. A regression suite around the approval state machine and the tenant
-scoping is the first thing worth adding — those are the two places where a
-silent regression is most costly.
+**`npm audit`: 5 advisories remain, all development-only.** `next` (DoS in App
+Router Server Actions) and `sharp` were the production-relevant findings and
+are fixed by the upgrade to Next 16. What remains — `prisma`, `@prisma/config`,
+`deepmerge-ts`, `js-yaml`, `brace-expansion` — is the Prisma CLI's dependency
+tree, which runs at build and migration time and is not in the request path.
+Clearing them requires Prisma 7, which drops `datasource.url` from
+schema.prisma in favour of a driver-adapter setup; that migration was not
+attempted here rather than risk the data layer on a final pass. It is the
+right follow-up.
 
 **`business` and `commerce` have no data source.** The schema has no revenue,
 customer, product or order model. Both pages say so rather than showing
 invented figures.
 
-**Model identifiers are unverified.** The agent defaults name `gpt-4o`,
-`gpt-4o-mini` and `claude-sonnet-4-5`. These have not been called — no
-provider key was available in the environment where this was built — so
-confirm them against your provider's current model list before launch. A wrong
-identifier surfaces as a 502 from `/api/chat`, not a silent wrong answer.
-
-**`npm audit` reports 7 advisories** (1 moderate, 6 high) in transitive
-development dependencies. None are in the runtime path. Resolve before launch.
+**Model identifiers are validated against a registry, not against the
+provider.** `src/lib/ai/models.ts` holds the supported ids; an unknown id is
+rejected when settings are written, and a known id whose provider has no key
+is rejected with that reason. The check runs on write only — verifying a model
+against the provider costs a round trip, and doing it per page render would
+add latency and burn quota. Keep the registry current; a model that has since
+been retired surfaces as a 502 at call time, which is the right place to find
+out.
 
 ## Credentials required before launch
 
@@ -97,8 +163,9 @@ any of them:
 |---|---|---|
 | `DATABASE_URL` | everything | app will not boot |
 | `AUTH_SECRET` | sessions | app will not boot |
-| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | agent runs and chat | those routes return 503 |
-| `SMTP_URL`, `OUTREACH_FROM` | sending approved outreach | dispatch fails, approval marked `FAILED` |
+| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | agent runs and chat | those routes return 503; policy blocks still return 403 |
+| `SMTP_URL`, `OUTREACH_FROM` | sending approved outreach, password-reset email | dispatch fails, approval marked `FAILED`; reset token issued but not delivered |
+| `WORKER_API_KEY` | unattended automation | scheduled runs are refused 401; session-driven automation still works |
 
 ## Architecture notes
 

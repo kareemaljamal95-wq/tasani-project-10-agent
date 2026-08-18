@@ -4,6 +4,13 @@ import { getSession, type SessionPayload } from '@/lib/auth/session';
 import { env } from '@/lib/env';
 import { logger } from '@/lib/logger';
 import { AIProviderError } from '@/lib/ai/provider';
+import {
+  RateLimitError,
+  rateLimitLocal,
+  rateLimitShared,
+} from '@/lib/rate-limit';
+
+export { RateLimitError, rateLimitShared };
 
 /**
  * Shared guards for route handlers: authentication, input validation and rate
@@ -27,13 +34,6 @@ export class ValidationError extends Error {
   ) {
     super(message);
     this.name = 'ValidationError';
-  }
-}
-
-export class RateLimitError extends Error {
-  constructor(readonly retryAfterSeconds: number) {
-    super('Too many requests.');
-    this.name = 'RateLimitError';
   }
 }
 
@@ -71,47 +71,13 @@ export async function parseBody<T>(
   return result.data;
 }
 
-interface Bucket {
-  count: number;
-  resetAt: number;
-}
-
-const buckets = new Map<string, Bucket>();
-const MAX_BUCKETS = 10_000;
-
 /**
- * Fixed-window limiter, in-process.
- *
- * Adequate for a single instance. Behind more than one replica this must move
- * to a shared store (Redis) — noted in PRODUCTION.md.
+ * In-process limiter, kept for read-heavy endpoints where a brief overshoot
+ * across replicas costs nothing. Sensitive endpoints use `rateLimitShared`,
+ * which counts in the database so the budget holds across instances.
  */
 export function rateLimit(identifier: string, max?: number): void {
-  const config = env();
-  const limit = max ?? config.RATE_LIMIT_MAX;
-  const now = Date.now();
-
-  if (buckets.size > MAX_BUCKETS) {
-    for (const [key, bucket] of buckets) {
-      if (bucket.resetAt <= now) buckets.delete(key);
-    }
-    if (buckets.size > MAX_BUCKETS) buckets.clear();
-  }
-
-  const existing = buckets.get(identifier);
-
-  if (!existing || existing.resetAt <= now) {
-    buckets.set(identifier, {
-      count: 1,
-      resetAt: now + config.RATE_LIMIT_WINDOW_MS,
-    });
-    return;
-  }
-
-  existing.count += 1;
-
-  if (existing.count > limit) {
-    throw new RateLimitError(Math.ceil((existing.resetAt - now) / 1000));
-  }
+  rateLimitLocal(identifier, max);
 }
 
 /** Best-effort client identity for rate limiting behind a proxy. */

@@ -29,6 +29,16 @@ model User {
   approvals      Approval[]
   auditLogs      AuditLog[]
   agentRuns      AgentRun[]
+  leads          Lead[]
+  activities     Activity[]
+  jobs           Job[]
+  triggers       AutomationTrigger[]
+  resetTokens    PasswordResetToken[]
+
+  /// First-run onboarding. Null until the user finishes; set once so the flow
+  /// never runs again. `onboardingStep` makes it resumable mid-way.
+  onboardingCompletedAt DateTime?
+  onboardingStep        String?
 }
 
 /// Lifecycle of anything an agent wants to do that touches the outside world.
@@ -99,6 +109,9 @@ model Approval {
   decidedBy String?
   decidedAt DateTime?
 
+  leadId String?
+  lead   Lead?   @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
   auditLogs AuditLog[]
 
   @@index([userId, status, createdAt])
@@ -141,8 +154,15 @@ model AgentRun {
   latencyMs Int?
   modelUsed String?
 
+  leadId String?
+  lead   Lead?   @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  /// Set when the run came from automation rather than a person.
+  jobId String?
+
   @@index([userId, createdAt])
   @@index([agentId, createdAt])
+  @@index([leadId, createdAt])
 }
 
 /// Single-row-per-key settings. Holds the per-user `manualOverride` switch so
@@ -286,4 +306,215 @@ model Message {
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@index([conversationId])
+}
+
+
+// ---------------------------------------------------------------------------
+// Leads
+// ---------------------------------------------------------------------------
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  PROPOSAL
+  WON
+  LOST
+}
+
+/// A prospect the workforce acts on.
+///
+/// Approval and AgentRun gain an optional leadId rather than growing parallel
+/// per-lead copies of either concept, so an automated action against a lead
+/// flows through exactly the same policy and approval pipeline as a manual one.
+model Lead {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  companyName String
+  contactName String?
+  email       String?
+  phone       String?
+  website     String?
+  source      String?
+  notes       String?
+
+  status LeadStatus @default(NEW)
+
+  /// 0-100. Set by the lead-scoring agent or by hand.
+  score Int @default(0)
+
+  /// Agent type currently responsible, e.g. "SALES".
+  assignedAgent String?
+
+  lastContactedAt DateTime?
+
+  approvals  Approval[]
+  agentRuns  AgentRun[]
+  activities Activity[]
+  jobs       Job[]
+
+  /// Deduplicates imports and automated creation within an account.
+  @@unique([userId, email])
+  @@index([userId, status, createdAt])
+  @@index([userId, assignedAgent])
+}
+
+enum ActivityType {
+  lead_created
+  lead_updated
+  status_changed
+  agent_run
+  approval_created
+  approval_decided
+  outreach_sent
+  note
+  automation
+}
+
+/// Append-only timeline for a lead. Distinct from AuditLog: AuditLog is the
+/// security/compliance record, this is the user-facing history of the account's
+/// work on a prospect.
+model Activity {
+  id        String       @id @default(cuid())
+  createdAt DateTime     @default(now())
+  type      ActivityType
+  message   String
+  data      Json?
+  actor     String?
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  leadId String?
+  lead   Lead?   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([leadId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Automation
+// ---------------------------------------------------------------------------
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+/// Minimal durable job queue.
+///
+/// Postgres-backed rather than a workflow platform: claimed with
+/// FOR UPDATE SKIP LOCKED so several workers can run without double-executing,
+/// retried with backoff, and deduplicated through idempotencyKey so a repeated
+/// trigger cannot queue the same action twice.
+model Job {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  leadId String?
+  lead   Lead?   @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  kind    String
+  payload Json
+
+  status JobStatus @default(PENDING)
+
+  runAt       DateTime @default(now())
+  attempts    Int      @default(0)
+  maxAttempts Int      @default(3)
+  lastError   String?
+
+  /// Held by a worker while running; a stale lock is reclaimed after a timeout.
+  lockedAt DateTime?
+  lockedBy String?
+
+  /// Unique per account. The guard against duplicate automated actions.
+  idempotencyKey String?
+
+  triggerId String?
+  trigger   AutomationTrigger? @relation(fields: [triggerId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, idempotencyKey])
+  @@index([status, runAt])
+  @@index([userId, createdAt])
+}
+
+/// A rule that enqueues jobs. Evaluated by the same worker that drains the
+/// queue, so automation needs no second runtime.
+model AutomationTrigger {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name    String
+  enabled Boolean @default(false)
+
+  /// What starts it, e.g. "lead_status" or "schedule".
+  kind String
+
+  /// Only leads in this status are picked up, when kind is lead_status.
+  leadStatus LeadStatus?
+
+  /// Agent to run and the objective template applied to each match.
+  agentType         String
+  objectiveTemplate String
+
+  /// Minimum gap between runs for the same lead, in hours.
+  cooldownHours Int @default(24)
+
+  lastRunAt DateTime?
+
+  jobs Job[]
+
+  @@index([userId, enabled])
+}
+
+// ---------------------------------------------------------------------------
+// Auth support
+// ---------------------------------------------------------------------------
+
+/// Password reset. Only the hash is stored — the raw token exists solely in
+/// the email that was sent, and is never written to the database or the logs.
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/// Cross-process rate limiting.
+///
+/// The in-process counter this replaces for sensitive endpoints enforced its
+/// budget per replica, so N instances allowed N times the intended rate. This
+/// is a fixed window shared through the database; Redis is the upgrade path
+/// once request volume makes a database write per request too expensive.
+model RateLimitCounter {
+  key     String   @id
+  count   Int      @default(0)
+  resetAt DateTime
+
+  @@index([resetAt])
 }
