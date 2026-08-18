@@ -32,16 +32,13 @@ export async function POST(req: Request) {
     const session = await requireUser();
     rateLimit(`agent-run:${session.userId}`, 20);
 
-    if (!hasAnyAIProvider()) {
-      return NextResponse.json(
-        { error: 'No AI provider is configured.' },
-        { status: 503 },
-      );
-    }
-
     const body = await parseBody(req, runSchema);
     const startedAt = Date.now();
 
+    // Policy is evaluated before the provider check on purpose: a forbidden
+    // objective must be refused whether or not a model is reachable. Ordering
+    // it the other way made an unconfigured install answer 503 to a request
+    // that should always be a 403.
     const policy = await evaluatePolicy({
       userId: session.userId,
       agentId: body.agentId,
@@ -72,6 +69,13 @@ export async function POST(req: Request) {
       return NextResponse.json(
         { ok: false, status: 'blocked', reason: policy.reason },
         { status: 403 },
+      );
+    }
+
+    if (!hasAnyAIProvider()) {
+      return NextResponse.json(
+        { error: 'No AI provider is configured.' },
+        { status: 503 },
       );
     }
 

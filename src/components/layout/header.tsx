@@ -1,6 +1,7 @@
 'use client';
 
 import { Bell, Search } from 'lucide-react';
+import { UserMenu } from './user-menu';
 
 export function Header() {
   return (
@@ -18,9 +19,7 @@ export function Header() {
           <Bell className="h-5 w-5 text-white/60" />
           <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-violet-500" />
         </button>
-        <div className="h-8 w-8 rounded-full bg-gradient-to-br from-violet-600 to-purple-600 flex items-center justify-center text-xs font-bold text-white">
-          A
-        </div>
+        <UserMenu />
       </div>
     </header>
   );
