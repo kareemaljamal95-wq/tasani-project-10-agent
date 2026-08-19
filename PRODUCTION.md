@@ -20,11 +20,11 @@ npm run dev
 ```bash
 npm run dev        # development server
 npm run typecheck  # tsc --noEmit
-npm run lint       # eslint (Next 16 removed `next lint`)
 npm run build      # production build; fails on type errors
 npm start          # serve the production build
 npm test           # vitest — needs DATABASE_URL on a throwaway database
 npm run worker     # standalone automation worker (optional; see Automation)
+npm run db:seed    # DEVELOPMENT ONLY — refuses to run with NODE_ENV set
 ```
 
 The test suite truncates tables, so point `DATABASE_URL` at a scratch
@@ -57,9 +57,28 @@ npm run worker
 Without `WORKER_API_KEY` the unattended path is closed — a signed-in session
 can still drive automation for its own account, but nothing runs unattended.
 
-The app refuses to start with an invalid environment rather than degrading
-into an insecure mode. `AUTH_SECRET` under 32 characters, or a missing
-`DATABASE_URL`, is a boot failure with a message naming the offending variable.
+**The scheduled HTTP call is the recommended production path.** It needs no
+second deployment unit, it is bounded by `maxDuration`, and several instances
+can run it safely because jobs are claimed with `FOR UPDATE SKIP LOCKED`. Use
+the worker process instead only where a long-running container is easier to
+operate than a scheduler. Do not run both against the same database unless you
+want both — they are safe together, just redundant.
+
+Suggested schedule: **every 5 minutes**. Each call evaluates every enabled
+trigger and drains up to 25 jobs. Trigger matching is bounded by each
+trigger's `cooldownHours` (default 24) and by a per-(trigger, lead, day)
+idempotency key, so a shorter interval increases responsiveness without
+increasing the number of actions taken.
+
+### Configuration failure behaviour
+
+Configuration is validated lazily, on first use. An instance missing
+`AUTH_SECRET` therefore *starts* — so `/api/health` validates the environment
+itself and returns 503 when it is invalid. Without that, a misconfigured
+instance served a green health check while 500-ing every real request, and a
+scheduled automation caller would have retried against it indefinitely. Point
+your readiness probe at `/api/health` and it will keep such an instance out of
+the pool.
 
 ## Deploying
 
@@ -131,15 +150,27 @@ no transport configured the token is still created correctly but no mail goes
 out; outside production the link is logged for development, never in
 production.
 
-**`npm audit`: 5 advisories remain, all development-only.** `next` (DoS in App
+**`npm audit`: 5 advisories remain — `prisma`, `@prisma/config`,
+`deepmerge-ts`, `js-yaml`, `brace-expansion`.** All are the Prisma **CLI**
+dependency tree. Classified empirically, not by assumption: `npm ls --omit=dev`
+resolves none of the five in the production dependency graph, so they load at
+build and migration time and never in the request path. `next` (DoS in App
 Router Server Actions) and `sharp` were the production-relevant findings and
-are fixed by the upgrade to Next 16. What remains — `prisma`, `@prisma/config`,
-`deepmerge-ts`, `js-yaml`, `brace-expansion` — is the Prisma CLI's dependency
-tree, which runs at build and migration time and is not in the request path.
-Clearing them requires Prisma 7, which drops `datasource.url` from
-schema.prisma in favour of a driver-adapter setup; that migration was not
-attempted here rather than risk the data layer on a final pass. It is the
-right follow-up.
+are already fixed by the move to Next 16. Eliminating the remainder requires
+Prisma 7, which drops `datasource.url` from schema.prisma in favour of a
+driver-adapter setup — a schema-contract change deliberately not attempted
+during an activation pass. It is the right follow-up, done on its own branch
+with the suite green.
+
+**Linting is not configured.** The repository has no eslint config; `next lint`
+supplied one implicitly and Next 16 removed the command. The `lint` script was
+removed rather than left as a command that cannot run. `npm run typecheck` and
+`npm run build` (which fails on type errors) are the quality gates.
+
+**`npm run db:seed` is development-only.** It creates a demo account whose
+password is a literal in `prisma/seed.ts`. The script now refuses to run unless
+`NODE_ENV` is development, because a documented seed command that plants a
+known-password account is a backdoor anywhere else.
 
 **`business` and `commerce` have no data source.** The schema has no revenue,
 customer, product or order model. Both pages say so rather than showing

@@ -3,8 +3,32 @@ import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
+/**
+ * Development seed.
+ *
+ * This creates a demo account whose password is a literal in this file. That
+ * is acceptable on a developer's machine and is a working backdoor anywhere
+ * else, so the script refuses to run outside development rather than relying
+ * on nobody typing `npm run db:seed` against production.
+ *
+ * SEED_ALLOW_NON_DEV=1 overrides it for a deliberate staging seed.
+ */
+function assertSafeToSeed(): void {
+  const nodeEnv = process.env.NODE_ENV ?? 'development';
+  const override = process.env.SEED_ALLOW_NON_DEV === '1';
+
+  if (nodeEnv !== 'development' && !override) {
+    throw new Error(
+      `Refusing to seed with NODE_ENV=${nodeEnv}. This seed creates a demo ` +
+        'account with a known password. Set SEED_ALLOW_NON_DEV=1 only if you ' +
+        'genuinely intend to create it outside development.',
+    );
+  }
+}
+
 async function main() {
-  console.log('🌱 Seeding KARMISH database...');
+  assertSafeToSeed();
+  console.log('🌱 Seeding development database...');
 
   const hashedPassword = await bcrypt.hash('demo1234', 12);
 
