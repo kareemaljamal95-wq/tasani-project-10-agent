@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
-import { AGENT_DEFAULTS } from '@/lib/ai/agent-defaults';
+import { provisionDefaultAgents } from '@/lib/ai/provisioning';
 import {
   clientIp,
   handleRouteError,
@@ -9,6 +9,7 @@ import {
   rateLimit,
   requireUser,
 } from '@/lib/api/guard';
+import { requireWithinLimit } from '@/lib/billing/entitlements';
 
 /**
  * Agent configuration.
@@ -28,31 +29,12 @@ const updateAgentSchema = z.object({
   isEnabled: z.boolean().optional(),
 });
 
-/** Ensures the caller has their default workforce, without duplicating rows. */
-async function ensureDefaultAgents(userId: string) {
-  // Relies on @@unique([userId, type]); concurrent requests converge instead
-  // of each inserting a full set of eight.
-  await prisma.agentConfig.createMany({
-    data: AGENT_DEFAULTS.map((agent) => ({
-      userId,
-      type: agent.type,
-      name: agent.name,
-      description: agent.description,
-      systemPrompt: agent.systemPrompt,
-      model: agent.model,
-      temperature: agent.temperature,
-      isEnabled: true,
-    })),
-    skipDuplicates: true,
-  });
-}
-
 export async function GET(req: Request) {
   try {
     const session = await requireUser();
     rateLimit(`agents:${session.userId}:${clientIp(req)}`);
 
-    await ensureDefaultAgents(session.userId);
+    await provisionDefaultAgents(session.userId);
 
     const agents = await prisma.agentConfig.findMany({
       where: { userId: session.userId },
@@ -85,6 +67,17 @@ export async function PATCH(req: Request) {
     rateLimit(`agents:${session.userId}:${clientIp(req)}`);
 
     const { id, ...updates } = await parseBody(req, updateAgentSchema);
+
+    // Enabling an agent consumes a paid slot, so it is checked against the
+    // plan. Counting only *other* enabled agents means re-saving an already
+    // enabled one is never blocked by itself.
+    if (updates.isEnabled === true) {
+      const enabled = await prisma.agentConfig.count({
+        where: { userId: session.userId, isEnabled: true, NOT: { id } },
+      });
+
+      await requireWithinLimit(session.userId, 'agents.max', enabled);
+    }
 
     // systemPrompt is not in the accepted field set, so it cannot be changed
     // through this route at all.

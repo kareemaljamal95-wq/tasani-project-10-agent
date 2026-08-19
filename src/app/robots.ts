@@ -20,6 +20,7 @@ export default function robots(): MetadataRoute.Robots {
         '/growth',
         '/sales',
         '/settings',
+        '/billing',
       ],
     },
     sitemap: `${SITE.url}/sitemap.xml`,

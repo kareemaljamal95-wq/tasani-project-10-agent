@@ -4,6 +4,8 @@ import { getSession, type SessionPayload } from '@/lib/auth/session';
 import { env } from '@/lib/env';
 import { logger } from '@/lib/logger';
 import { AIProviderError } from '@/lib/ai/provider';
+import { EntitlementError } from '@/lib/billing/entitlements';
+import { UsageLimitError } from '@/lib/billing/usage';
 import {
   RateLimitError,
   rateLimitLocal,
@@ -109,6 +111,30 @@ export function handleRouteError(error: unknown, context: string): NextResponse 
     return NextResponse.json(
       { error: 'Too many requests. Please retry shortly.' },
       { status: 429, headers: { 'Retry-After': String(error.retryAfterSeconds) } },
+    );
+  }
+
+  // 402 Payment Required: the request was valid and the caller authenticated,
+  // but the plan does not cover it. Distinct from 403 so the UI can offer an
+  // upgrade rather than an access error.
+  if (error instanceof EntitlementError) {
+    return NextResponse.json(
+      { error: error.message, capability: error.capability, upgradeRequired: true },
+      { status: 402 },
+    );
+  }
+
+  // 429 with the quota detail, so the client can show how much is left and
+  // when it resets rather than a bare "too many requests".
+  if (error instanceof UsageLimitError) {
+    return NextResponse.json(
+      {
+        error: error.message,
+        used: error.used,
+        limit: error.limit,
+        upgradeRequired: true,
+      },
+      { status: 429 },
     );
   }
 

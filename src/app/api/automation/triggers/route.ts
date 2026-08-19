@@ -10,6 +10,7 @@ import {
   rateLimit,
   requireUser,
 } from '@/lib/api/guard';
+import { requireWithinLimit } from '@/lib/billing/entitlements';
 
 /**
  * Automation triggers.
@@ -100,6 +101,16 @@ export async function PATCH(req: Request) {
 
     if (!owned) {
       return NextResponse.json({ error: 'Trigger not found.' }, { status: 404 });
+    }
+
+    // Enabling an automation consumes a paid slot. Other enabled triggers are
+    // counted, so re-enabling one already on is not blocked by itself.
+    if (updates.enabled === true) {
+      const enabled = await prisma.automationTrigger.count({
+        where: { userId: session.userId, enabled: true, NOT: { id } },
+      });
+
+      await requireWithinLimit(session.userId, 'automations.max', enabled);
     }
 
     if (Object.keys(updates).length > 0) {

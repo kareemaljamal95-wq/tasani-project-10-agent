@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/prisma';
 import { getSession } from '@/lib/auth/session';
 import { AGENT_DEFAULTS } from '@/lib/ai/agent-defaults';
+import { provisionDefaultAgents } from '@/lib/ai/provisioning';
 import { AgentWorkspace } from './agent-workspace';
 
 export const dynamic = 'force-dynamic';
@@ -26,19 +27,7 @@ export default async function AgentsPage() {
 
   const userId = session.userId;
 
-  await prisma.agentConfig.createMany({
-    data: AGENT_DEFAULTS.map((agent) => ({
-      userId,
-      type: agent.type,
-      name: agent.name,
-      description: agent.description,
-      systemPrompt: agent.systemPrompt,
-      model: agent.model,
-      temperature: agent.temperature,
-      isEnabled: true,
-    })),
-    skipDuplicates: true,
-  });
+  await provisionDefaultAgents(userId);
 
   const agents = await prisma.agentConfig.findMany({
     where: { userId },

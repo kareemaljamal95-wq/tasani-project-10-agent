@@ -10,6 +10,7 @@ import {
   rateLimitShared,
   requireUser,
 } from '@/lib/api/guard';
+import { requireCapability } from '@/lib/billing/entitlements';
 
 const createLeadSchema = z.object({
   companyName: z.string().min(1).max(300),
@@ -64,6 +65,10 @@ export async function POST(req: Request) {
     // Shared budget: lead creation is the surface an import loop or a scripted
     // abuse run would hammer, so it must hold across replicas.
     await rateLimitShared(`leads-write:${session.userId}`, 120);
+
+    // Creating a lead is a paid capability. Reading remains open so an
+    // account whose subscription lapsed can still see and export its data.
+    await requireCapability(session.userId, 'leads.enabled');
 
     const body = await parseBody(req, createLeadSchema);
 

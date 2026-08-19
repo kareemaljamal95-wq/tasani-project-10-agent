@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Bot, Brain, Calendar, TrendingUp, Briefcase, ShoppingCart, Sparkles, LayoutDashboard, ChevronLeft, ShieldCheck, Users, X } from 'lucide-react';
+import { Bot, Brain, Calendar, TrendingUp, Briefcase, ShoppingCart, Sparkles, LayoutDashboard, ChevronLeft, CreditCard, ShieldCheck, Users, X } from 'lucide-react';
 
 const navItems = [
   { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
@@ -18,6 +18,7 @@ const navItems = [
   { href: '/brain', icon: Brain, label: 'Brain' },
   { href: '/growth', icon: Sparkles, label: 'Growth' },
   { href: '/agents', icon: Bot, label: 'Agents' },
+  { href: '/billing', icon: CreditCard, label: 'Billing' },
 ];
 
 export function Sidebar() {

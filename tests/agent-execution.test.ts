@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import {
   createTestUser,
   clearProviderKeys,
+  giveTestSubscription,
   provisionAgents,
   resetDatabase,
   setProviderKey,
@@ -49,6 +50,7 @@ describe('agent execution', () => {
   it('blocks a forbidden objective and records the run', async () => {
     const user = await createTestUser();
     await provisionAgents(user.id);
+    await giveTestSubscription(user.id);
 
     const result = await executeAgent({
       userId: user.id,
@@ -75,6 +77,7 @@ describe('agent execution', () => {
 
     const user = await createTestUser();
     await provisionAgents(user.id);
+    await giveTestSubscription(user.id);
 
     const result = await executeAgent({
       userId: user.id,
@@ -91,6 +94,7 @@ describe('agent execution', () => {
 
     const user = await createTestUser();
     await provisionAgents(user.id);
+    await giveTestSubscription(user.id);
 
     await expect(
       executeAgent({
@@ -105,6 +109,7 @@ describe('agent execution', () => {
   it('creates a pending approval when policy requires one', async () => {
     const user = await createTestUser();
     await provisionAgents(user.id);
+    await giveTestSubscription(user.id);
 
     // CEO carries a zero micro-budget, so its decisions always need a human.
     const result = await executeAgent({
@@ -126,6 +131,7 @@ describe('agent execution', () => {
   it('returns an autonomous result inside the agent budget', async () => {
     const user = await createTestUser();
     await provisionAgents(user.id);
+    await giveTestSubscription(user.id);
 
     const result = await executeAgent({
       userId: user.id,
@@ -142,6 +148,7 @@ describe('agent execution', () => {
   it('forces approval for every action while manual override is on', async () => {
     const user = await createTestUser();
     await provisionAgents(user.id);
+    await giveTestSubscription(user.id);
 
     await setManualOverride(user.id, true, user.email);
 
@@ -159,6 +166,7 @@ describe('agent execution', () => {
   it('escalates to approval when the amount exceeds the agent budget', async () => {
     const user = await createTestUser();
     await provisionAgents(user.id);
+    await giveTestSubscription(user.id);
 
     const result = await executeAgent({
       userId: user.id,

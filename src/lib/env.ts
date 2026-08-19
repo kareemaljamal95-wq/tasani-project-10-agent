@@ -33,6 +33,15 @@ const envSchema = z.object({
    */
   WORKER_API_KEY: z.string().min(32).optional(),
 
+  // --- Billing -------------------------------------------------------------
+  // PAYPAL_CLIENT_SECRET must never reach the browser. It is read only in
+  // src/lib/billing/providers/paypal.ts, which is server-only.
+  PAYPAL_CLIENT_ID: z.string().min(1).optional(),
+  PAYPAL_CLIENT_SECRET: z.string().min(1).optional(),
+  PAYPAL_ENVIRONMENT: z.enum(['sandbox', 'production']).default('sandbox'),
+  /** Required to verify webhooks; without it every webhook is rejected. */
+  PAYPAL_WEBHOOK_ID: z.string().min(1).optional(),
+
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(60),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
   AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
@@ -76,6 +85,13 @@ export function env(): Env {
 
   cached = value;
   return value;
+}
+
+/** True when a payment provider has usable credentials configured. */
+export function hasBillingProvider(): boolean {
+  return Boolean(
+    process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET,
+  );
 }
 
 /**

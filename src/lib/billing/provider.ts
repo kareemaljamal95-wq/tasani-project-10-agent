@@ -1,0 +1,78 @@
+/**
+ * Payment provider boundary.
+ *
+ * The billing domain speaks this interface and nothing else. No PayPal type
+ * appears in a route, a service or the schema — the domain stores a provider
+ * name plus opaque provider identifiers, which is what makes a second provider
+ * an added file rather than a rewrite.
+ */
+
+export interface ProviderCapabilities {
+  /** REST credentials present and an access token obtainable. */
+  restApi: boolean;
+  /** Subscriptions/billing-plans API usable by this merchant account. */
+  subscriptions: boolean;
+  /** Webhook verification configured (webhook id present). */
+  webhooks: boolean;
+  /** Running against production rather than sandbox. */
+  production: boolean;
+  /** Human-readable detail for the operator, safe to log. */
+  detail: string[];
+}
+
+export interface CreateCheckoutInput {
+  userId: string;
+  /** Resolved server-side from the catalog — never supplied by the client. */
+  planCode: string;
+  interval: 'MONTH' | 'YEAR';
+  currency: string;
+  amount: number;
+  offerCode?: string;
+  returnUrl: string;
+  cancelUrl: string;
+  idempotencyKey: string;
+}
+
+export interface CreateCheckoutResult {
+  providerOrderId: string;
+  approvalUrl: string;
+  expiresAt?: Date;
+}
+
+export interface VerifiedWebhook {
+  verified: boolean;
+  eventId: string | null;
+  eventType: string | null;
+  /** Provider subscription id, when the event carries one. */
+  providerSubscriptionId: string | null;
+  /** Safe, redacted subset of the payload for the audit record. */
+  metadata: Record<string, unknown>;
+}
+
+export interface BillingProvider {
+  readonly name: string;
+
+  /** Reports what this deployment can actually do. Never guesses. */
+  capabilities(): Promise<ProviderCapabilities>;
+
+  createCheckout(input: CreateCheckoutInput): Promise<CreateCheckoutResult>;
+
+  /** Verifies a webhook's authenticity using the provider's own mechanism. */
+  verifyWebhook(
+    rawBody: string,
+    headers: Record<string, string>,
+  ): Promise<VerifiedWebhook>;
+
+  cancelSubscription(providerSubscriptionId: string, reason: string): Promise<void>;
+}
+
+/** Thrown when an operation needs a provider capability this account lacks. */
+export class ProviderCapabilityError extends Error {
+  constructor(
+    readonly capability: keyof ProviderCapabilities,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'ProviderCapabilityError';
+  }
+}

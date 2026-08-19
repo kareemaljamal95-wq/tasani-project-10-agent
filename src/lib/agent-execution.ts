@@ -6,6 +6,7 @@ import { recordAudit } from '@/lib/audit';
 import { recordActivity } from '@/lib/activity';
 import { track } from '@/lib/analytics';
 import { hasAnyAIProvider } from '@/lib/env';
+import { consumeAiAction } from '@/lib/billing/usage';
 
 /**
  * The single agent execution path.
@@ -95,6 +96,13 @@ export async function executeAgent(
   }
 
   if (!hasAnyAIProvider()) throw new ProviderUnavailableError();
+
+  // Metered here, after policy and before the model call. Deliberate ordering:
+  // a policy-blocked run is never charged (the customer is not billed for the
+  // system refusing), and the reservation is atomic so two concurrent runs at
+  // the limit cannot both proceed. Raises EntitlementError or UsageLimitError,
+  // which the callers surface as 402/429 rather than a generic failure.
+  await consumeAiAction(input.userId);
 
   const decision = await runAgentDecision({
     userId: input.userId,

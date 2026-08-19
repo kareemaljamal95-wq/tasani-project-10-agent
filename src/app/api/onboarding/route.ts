@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
-import { AGENT_DEFAULTS } from '@/lib/ai/agent-defaults';
+import { provisionDefaultAgents } from '@/lib/ai/provisioning';
 import { configuredProviders } from '@/lib/ai/models';
 import { recordActivity } from '@/lib/activity';
 import { track } from '@/lib/analytics';
@@ -117,27 +117,14 @@ export async function POST(req: Request) {
     }
 
     if (body.action === 'provision_agents') {
-      // skipDuplicates plus @@unique([userId, type]) makes this safe to call
-      // more than once, which matters for a resumable flow.
-      await prisma.agentConfig.createMany({
-        data: AGENT_DEFAULTS.map((agent) => ({
-          userId: session.userId,
-          type: agent.type,
-          name: agent.name,
-          description: agent.description,
-          systemPrompt: agent.systemPrompt,
-          model: agent.model,
-          temperature: agent.temperature,
-          isEnabled: true,
-        })),
-        skipDuplicates: true,
-      });
+      // Idempotent, and enables only as many agents as the plan allows.
+      const provisioned = await provisionDefaultAgents(session.userId);
 
-      const count = await prisma.agentConfig.count({
-        where: { userId: session.userId },
+      return NextResponse.json({
+        completed: false,
+        agentsProvisioned: provisioned.total,
+        agentsEnabled: provisioned.enabled,
       });
-
-      return NextResponse.json({ completed: false, agentsProvisioned: count });
     }
 
     await prisma.user.update({

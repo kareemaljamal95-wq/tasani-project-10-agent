@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma';
 import { AGENT_DEFAULTS } from '@/lib/ai/agent-defaults';
+import { syncCatalog } from '@/lib/billing';
 
 /**
  * Shared fixtures.
@@ -12,6 +13,8 @@ import { AGENT_DEFAULTS } from '@/lib/ai/agent-defaults';
 export async function resetDatabase(): Promise<void> {
   await prisma.$executeRawUnsafe(`
     TRUNCATE TABLE
+      "BillingEvent", "CheckoutSession", "OfferRedemption", "Offer",
+      "UsageCounter", "Subscription", "Price", "Plan",
       "Job", "AutomationTrigger", "Activity", "Approval", "AgentRun",
       "AuditLog", "Lead", "Message", "Conversation", "AgentConfig",
       "Memory", "Task", "Goal", "Habit", "CalendarEvent",
@@ -58,6 +61,46 @@ export async function provisionAgents(userId: string): Promise<void> {
       isEnabled: true,
     })),
     skipDuplicates: true,
+  });
+}
+
+let subscriptionCounter = 0;
+
+/**
+ * Gives an account an active paid subscription.
+ *
+ * Agent execution meters usage against entitlements, so any test that runs an
+ * agent needs a plan — an unpaid account is correctly refused before the model
+ * is called. Defaults to `scale` so plan limits never incidentally fail a test
+ * that is about something else.
+ */
+export async function giveTestSubscription(
+  userId: string,
+  planCode = 'scale',
+): Promise<void> {
+  await syncCatalog();
+
+  const plan = await prisma.plan.findUniqueOrThrow({ where: { code: planCode } });
+  const price = await prisma.price.findFirstOrThrow({
+    where: { planId: plan.id, interval: 'MONTH' },
+  });
+
+  subscriptionCounter += 1;
+
+  await prisma.subscription.create({
+    data: {
+      userId,
+      planId: plan.id,
+      priceId: price.id,
+      provider: 'test',
+      providerSubscriptionId: `TEST-SUB-${subscriptionCounter}-${Date.now()}`,
+      status: 'ACTIVE',
+      currency: price.currency,
+      amount: price.amount,
+      interval: 'MONTH',
+      currentPeriodStart: new Date(Date.now() - 86_400_000),
+      currentPeriodEnd: new Date(Date.now() + 25 * 86_400_000),
+    },
   });
 }
 

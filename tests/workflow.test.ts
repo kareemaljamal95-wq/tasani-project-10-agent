@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import {
   createTestUser,
   provisionAgents,
+  giveTestSubscription,
   resetDatabase,
   setProviderKey,
 } from './helpers';
@@ -119,6 +120,7 @@ describe('lead workflow', () => {
   it('runs an agent against a lead and links the approval to it', async () => {
     const user = await createTestUser();
     await provisionAgents(user.id);
+    await giveTestSubscription(user.id);
 
     const lead = await createLead({
       userId: user.id,
@@ -189,6 +191,7 @@ describe('automation', () => {
   it('drives a trigger through the queue into a real approval', async () => {
     const user = await createTestUser();
     await provisionAgents(user.id);
+    await giveTestSubscription(user.id);
 
     const lead = await createLead({
       userId: user.id,

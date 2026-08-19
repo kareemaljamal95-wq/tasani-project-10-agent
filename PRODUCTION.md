@@ -25,6 +25,7 @@ npm start          # serve the production build
 npm test           # vitest — needs DATABASE_URL on a throwaway database
 npm run worker     # standalone automation worker (optional; see Automation)
 npm run db:seed    # DEVELOPMENT ONLY — refuses to run with NODE_ENV set
+npm run db:catalog # projects plans/prices/offers into the database (idempotent)
 ```
 
 The test suite truncates tables, so point `DATABASE_URL` at a scratch
@@ -90,6 +91,39 @@ instance served a green health check while 500-ing every real request, and a
 scheduled automation caller would have retried against it indefinitely. Point
 your readiness probe at `/api/health` and it will keep such an instance out of
 the pool.
+
+## Billing
+
+Pricing lives in `src/lib/billing/catalog.ts` as data. No feature code branches
+on a plan code; everything resolves through `src/lib/billing/entitlements.ts`,
+which is the single authority. `npm run db:catalog` projects the catalog into
+the database and must run after any deploy that changes prices or limits.
+
+**The client chooses a plan code and an interval, and nothing else.** Amount,
+currency and any promotional price are resolved server-side. A request carrying
+`amount=1` is not rejected — the field is simply never read. Verified at
+runtime: a checkout posted with `amount=1, currency=XXX, priceId=forged` for
+the Scale plan stored `39900 USD`.
+
+**A browser return from PayPal activates nothing.** Only a signature-verified
+webhook changes billing state. `/billing/return` reports the current state and
+asks the customer to wait if confirmation has not arrived.
+
+Webhook endpoint: `POST /api/billing/webhooks/paypal`. It fails closed —
+without `PAYPAL_WEBHOOK_ID` every delivery is rejected. Idempotency comes from
+a unique constraint on (provider, providerEventId); ordering safety from the
+subscription state machine, which refuses illegal transitions rather than
+applying whatever arrived last.
+
+Metering: an **AI action** is one call to `executeAgent` that reached the
+model. Policy-blocked runs are not counted — the customer is not charged for
+the system refusing. The counter is incremented by one atomic statement, so
+concurrent requests cannot both overshoot the limit.
+
+Subscription states and what they grant are defined in
+`src/lib/billing/entitlements.ts`. `CANCELLED` keeps access until
+`currentPeriodEnd` because that period is already paid for; the automation
+worker expires lapsed rows on its normal cycle.
 
 ## Deploying
 

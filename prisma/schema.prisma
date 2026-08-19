@@ -34,6 +34,11 @@ model User {
   jobs           Job[]
   triggers       AutomationTrigger[]
   resetTokens    PasswordResetToken[]
+  subscriptions  Subscription[]
+  billingEvents  BillingEvent[]
+  offerRedemptions OfferRedemption[]
+  usageCounters  UsageCounter[]
+  checkoutSessions CheckoutSession[]
 
   /// First-run onboarding. Null until the user finishes; set once so the flow
   /// never runs again. `onboardingStep` makes it resumable mid-way.
@@ -517,4 +522,278 @@ model RateLimitCounter {
   resetAt DateTime
 
   @@index([resetAt])
+}
+
+
+// ---------------------------------------------------------------------------
+// Billing
+//
+// `User` is the account. There is deliberately no second Account model: adding
+// one would fork every existing ownership check, all of which already scope by
+// userId.
+//
+// All money is stored as integer minor units (cents). Floating point currency
+// is a rounding bug waiting for a customer to find it.
+// ---------------------------------------------------------------------------
+
+enum BillingInterval {
+  MONTH
+  YEAR
+}
+
+/// Subscription lifecycle. Nothing outside ACTIVE and TRIALING grants paid
+/// entitlements except CANCELLED, which keeps access to the end of a period
+/// already paid for.
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+  EXPIRED
+  SUSPENDED
+}
+
+enum CheckoutStatus {
+  CREATED
+  APPROVED
+  COMPLETED
+  FAILED
+  EXPIRED
+}
+
+/// A commercial plan. Rows are projected from the code catalog in
+/// src/lib/billing/catalog.ts, which stays the source of truth so a deploy can
+/// change limits without a data migration.
+model Plan {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  name        String
+  description String
+  active      Boolean  @default(true)
+  sortOrder   Int      @default(0)
+
+  /// Entitlement limits, resolved through src/lib/billing/entitlements.ts.
+  /// Kept as JSON so adding a limit does not require a migration.
+  limits Json
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  prices        Price[]
+  subscriptions Subscription[]
+
+  @@index([active, sortOrder])
+}
+
+/// A billable variant of a plan. Monthly and annual are separate prices under
+/// one plan rather than duplicated plans, so entitlement logic never branches
+/// on interval.
+model Price {
+  id       String          @id @default(cuid())
+  planId   String
+  plan     Plan            @relation(fields: [planId], references: [id], onDelete: Cascade)
+  interval BillingInterval
+  currency String          @default("USD")
+  /// Minor units. 4900 = $49.00.
+  amount   Int
+  active   Boolean         @default(true)
+
+  provider        String?
+  /// Provider-side plan/price identifier, populated once the provider has it.
+  providerPriceId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  subscriptions    Subscription[]
+  checkoutSessions CheckoutSession[]
+
+  @@unique([planId, interval, currency])
+  @@index([active])
+}
+
+model Subscription {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  planId  String
+  plan    Plan   @relation(fields: [planId], references: [id])
+  priceId String?
+  price   Price? @relation(fields: [priceId], references: [id])
+
+  provider               String
+  providerCustomerId     String?
+  /// Unique per provider: the guard against a duplicate activation creating a
+  /// second subscription row for one provider subscription.
+  providerSubscriptionId String?
+
+  status   SubscriptionStatus @default(TRIALING)
+  currency String             @default("USD")
+  amount   Int
+  interval BillingInterval
+
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+  trialEndsAt        DateTime?
+
+  cancelAtPeriodEnd Boolean   @default(false)
+  cancelledAt       DateTime?
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  offerRedemptions OfferRedemption[]
+  billingEvents    BillingEvent[]
+
+  @@unique([provider, providerSubscriptionId])
+  @@index([userId, status])
+  @@index([status, currentPeriodEnd])
+}
+
+/// Provider event log. `providerEventId` is unique, which is what makes
+/// webhook processing idempotent under duplicate and retried delivery.
+///
+/// No card data, no tokens, no raw payload: only a hash for correlation and a
+/// redacted metadata object.
+model BillingEvent {
+  id              String @id @default(cuid())
+  provider        String
+  providerEventId String
+  eventType       String
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  subscriptionId String?
+  subscription   Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  status      String    @default("processed")
+  processedAt DateTime?
+  /// SHA-256 of the raw body, for correlating a report with a delivery.
+  payloadHash String?
+  metadata    Json?
+  error       String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([provider, providerEventId])
+  @@index([eventType, createdAt])
+  @@index([userId, createdAt])
+}
+
+/// A promotional price, e.g. the founding-partner offer. Modelled as data so
+/// no customer-specific branch ever enters the application.
+model Offer {
+  code        String   @id
+  name        String
+  description String
+  active      Boolean  @default(true)
+
+  startsAt DateTime?
+  endsAt   DateTime?
+
+  /// How many billing periods the discounted amount applies for.
+  durationMonths Int    @default(3)
+  currency       String @default("USD")
+  /// Minor units, the discounted price itself rather than a percentage.
+  amount         Int
+
+  maxRedemptions Int
+  /// Incremented only by a conditional UPDATE guarded on maxRedemptions, so
+  /// the cap holds under concurrency.
+  redemptionCount Int @default(0)
+
+  /// Plan codes the offer may be applied to; empty means any plan.
+  eligiblePlanCodes String[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  redemptions OfferRedemption[]
+}
+
+model OfferRedemption {
+  id        String @id @default(cuid())
+  offerCode String
+  offer     Offer  @relation(fields: [offerCode], references: [code], onDelete: Cascade)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  subscriptionId String?
+  subscription   Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+
+  redeemedAt DateTime  @default(now())
+  expiresAt  DateTime?
+
+  /// One redemption of a given offer per account.
+  @@unique([offerCode, userId])
+  @@index([userId])
+}
+
+/// Server-created checkout intent. The client never supplies plan, price,
+/// amount or currency for the actual charge — those are resolved here from
+/// trusted configuration and stored before the provider is contacted.
+model CheckoutSession {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  priceId String
+  price   Price  @relation(fields: [priceId], references: [id])
+
+  planCode  String
+  offerCode String?
+
+  provider           String
+  providerOrderId    String?
+  providerApprovalUrl String?
+
+  currency String
+  amount   Int
+
+  status CheckoutStatus @default(CREATED)
+
+  /// Deduplicates double-clicks, browser retries and network retries.
+  idempotencyKey String
+
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, status])
+  @@index([provider, providerOrderId])
+}
+
+/// Metered usage, counted per account per billing period.
+///
+/// An "AI action" is one billable unit of agent work: exactly one successful
+/// call to executeAgent that reached the model. Policy-blocked runs are not
+/// counted — the customer is not charged for the system refusing.
+model UsageCounter {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Billing period this counter belongs to, as YYYY-MM-DD of the period start.
+  periodKey   String
+  periodStart DateTime
+  periodEnd   DateTime
+
+  metric String @default("ai_actions")
+  /// Incremented by a single atomic statement so concurrent requests cannot
+  /// both read the same value and overshoot the limit.
+  count  Int    @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, periodKey, metric])
+  @@index([userId, periodKey])
 }

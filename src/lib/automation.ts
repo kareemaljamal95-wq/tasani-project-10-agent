@@ -11,6 +11,7 @@ import {
   failJob,
 } from '@/lib/jobs';
 import { pruneRateLimitCounters } from '@/lib/rate-limit';
+import { expireLapsedSubscriptions } from '@/lib/billing/subscription';
 
 /**
  * The automation layer.
@@ -210,7 +211,12 @@ export async function processJobs(
     }
   }
 
+  // Housekeeping on the same schedule. Expiring lapsed subscriptions here is
+  // what stops a CANCELLED plan granting access forever on the strength of a
+  // currentPeriodEnd nothing re-reads. Failures are swallowed: housekeeping
+  // must never fail the job cycle.
   await pruneRateLimitCounters().catch(() => undefined);
+  await expireLapsedSubscriptions().catch(() => undefined);
 
   return { processed, succeeded, failed };
 }
