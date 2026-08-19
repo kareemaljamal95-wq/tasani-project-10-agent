@@ -59,10 +59,21 @@ can still drive automation for its own account, but nothing runs unattended.
 
 **The scheduled HTTP call is the recommended production path.** It needs no
 second deployment unit, it is bounded by `maxDuration`, and several instances
-can run it safely because jobs are claimed with `FOR UPDATE SKIP LOCKED`. Use
-the worker process instead only where a long-running container is easier to
-operate than a scheduler. Do not run both against the same database unless you
-want both — they are safe together, just redundant.
+can run it safely because jobs are claimed with `FOR UPDATE SKIP LOCKED`. Do
+not run both paths against the same database unless you want both — they are
+safe together, just redundant.
+
+Two things about the worker process, confirmed by running it:
+
+- `npm run worker` executes `tsx scripts/worker.ts`, and `tsx` is a
+  **devDependency**. It therefore does **not** exist in the container image,
+  whose runner stage installs with `npm ci --omit=dev`. The worker is for a
+  host that has development dependencies installed. To run it as the container's
+  process instead, either move `tsx` into `dependencies` or compile the script
+  ahead of time — do not assume `npm run worker` works inside the image.
+- Use `curl -fsS` for the scheduled call, as shown. `-f` makes curl exit
+  non-zero on 401/503, which is what lets a cron job or scheduler alert on a
+  bad worker key or an unready instance instead of silently succeeding.
 
 Suggested schedule: **every 5 minutes**. Each call evaluates every enabled
 trigger and drains up to 25 jobs. Trigger matching is bounded by each

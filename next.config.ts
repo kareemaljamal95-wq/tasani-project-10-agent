@@ -6,8 +6,9 @@ const nextConfig: NextConfig = {
   output: 'standalone',
 
   // Fail the production build on type errors rather than shipping them.
-  // Next 16 dropped the `eslint` key from this config and the `next lint`
-  // command; linting runs through the eslint CLI instead (npm run lint).
+  // Next 16 dropped both the `eslint` key from this config and the `next lint`
+  // command. No eslint config exists in this repo, so `npm run typecheck` and
+  // this build are the quality gates.
   typescript: { ignoreBuildErrors: false },
 
   poweredByHeader: false,
