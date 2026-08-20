@@ -14,6 +14,22 @@ RUN npm ci
 
 COPY . .
 RUN npx prisma generate
+
+# NEXT_PUBLIC_* variables are inlined by Next at build time, so the public
+# origin has to be present *here* — setting it at runtime changes nothing,
+# because the value is already compiled into the bundle.
+#
+# A Dockerfile build is isolated from the host environment by design, so a
+# platform variable does not reach it unless an ARG opts in. Railway states this
+# explicitly. Without the ARG the build silently used the localhost fallback in
+# src/lib/site.ts and shipped a live site whose sitemap, robots.txt, canonical
+# tags and OpenGraph URLs all said http://localhost:3000 — with a green deploy
+# and a healthy /api/health, so nothing looked wrong.
+#
+# Unset is still safe (the fallback applies); it is just not publishable.
+ARG NEXT_PUBLIC_APP_URL
+ENV NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL
+
 RUN npm run build
 
 # ---------------------------------------------------------------------------
@@ -57,6 +73,10 @@ COPY --from=deps /app/node_modules/.bin ./node_modules/.bin
 # live database to match the schema — on every container start.
 COPY --chown=nextjs:nodejs docker-entrypoint.sh ./
 RUN chmod +x ./docker-entrypoint.sh
+
+# Used by the scheduled automation service, which runs the same image with a
+# different start command.
+COPY --chown=nextjs:nodejs scripts/trigger-automation.mjs ./scripts/
 
 USER nextjs
 

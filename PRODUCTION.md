@@ -163,6 +163,44 @@ worker expires lapsed rows on its normal cycle.
 
 ## Deploying
 
+### Railway
+
+Railway builds the `Dockerfile`, so `vercel.json` and `scripts/vercel-build.sh`
+are inert there — Railway never reads them. `railway.json` declares the builder,
+the `/api/health` health check and the restart policy so the deploy is
+reproducible from the repository rather than from dashboard state.
+
+Migrations run from `docker-entrypoint.sh` at **container start**, against a
+live `DATABASE_URL`. That is why Railway is an easier target than Vercel: none
+of the build-time migration problems below can occur.
+
+**`NEXT_PUBLIC_APP_URL` must be set before the image is built.** Next inlines
+`NEXT_PUBLIC_*` at build time, and a Dockerfile build is isolated from the host
+environment, so a platform variable does not reach it unless an `ARG` opts in —
+Railway documents this. The builder stage declares `ARG NEXT_PUBLIC_APP_URL`
+for exactly that reason. Setting the variable at runtime is too late: the value
+is already compiled in.
+
+That creates an ordering requirement, and skipping the last step is silent:
+
+1. Create the service from the repository. The first build has no domain yet, so
+   it bakes the `http://localhost:3000` fallback.
+2. Generate the public domain.
+3. Set `NEXT_PUBLIC_APP_URL` to it, no trailing slash.
+4. **Redeploy**, so the image is rebuilt with the real origin.
+
+Skip step 4 and the deploy is green, `/api/health` is 200, and every canonical
+tag, OpenGraph URL, `robots.txt` and `sitemap.xml` entry on the live site says
+`localhost`. Verify with `curl -s https://<host>/sitemap.xml | head`.
+
+Automation is a **second service** on the same repository, with the start
+command `node scripts/trigger-automation.mjs` and a cron schedule of
+`*/5 * * * *`. Railway cron is UTC, has a five-minute minimum, and skips a tick
+if the previous run is still going — which is why that script performs one cycle
+and exits rather than looping. It needs `WORKER_API_KEY` and
+`AUTOMATION_TARGET_URL` (the web service's public URL), and exits non-zero on a
+refusal so a bad key shows as a failed run instead of a quiet success.
+
 ### Vercel
 
 `vercel.json` runs `scripts/vercel-build.sh`, which applies migrations and then
