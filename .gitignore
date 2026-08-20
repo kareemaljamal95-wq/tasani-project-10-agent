@@ -34,7 +34,11 @@ yarn-error.log*
 next-env.d.ts
 
 # prisma
-prisma/migrations/
+# NOTE: prisma/migrations/ is deliberately NOT ignored. Migration history is
+# source, not build output: `prisma migrate deploy` is the start path in both
+# docker-entrypoint.sh and vercel.json, and with an empty migrations directory
+# it prints "No migration found" and exits 0 — a green deploy against a
+# database that was never migrated.
 
 # Test/build scratch
 /coverage
