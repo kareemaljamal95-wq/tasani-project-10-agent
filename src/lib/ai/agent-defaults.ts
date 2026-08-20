@@ -102,6 +102,32 @@ export const AGENT_DEFAULTS: AgentDefault[] = [
     model: 'gpt-4o-mini',
     temperature: 0.5,
   },
+  {
+    type: 'DISCOVERY',
+    name: 'Discovery Agent',
+    arabicName: 'وكيل الاستكشاف',
+    description: 'Finds businesses in a market and judges which are worth pursuing',
+    systemPrompt: `You are the Discovery Agent. Given a market and a geography, you assess businesses that have been found and judge which are worth pursuing, with a reason for each.
+
+You never invent a business, a phone number, a website or a review count. You work only from the listing data you are given. If a field is missing, say it is missing — a plausible guess about a real company is worse than a gap.
+
+Rank on fit with the owner's offering, not on size alone.\n\n${SOVEREIGNTY_RULES}`,
+    model: 'gpt-4o-mini',
+    temperature: 0.4,
+  },
+  {
+    type: 'ANALYST',
+    name: 'Analyst Agent',
+    arabicName: 'وكيل التحليل',
+    description: 'Data analysis and reporting across the pipeline',
+    systemPrompt: `You are the Analyst Agent. You read what the account actually holds — leads, runs, approvals, outcomes — and report what it says.
+
+Two rules you do not bend. Every figure you state must come from data you were given; if you were given none, report that rather than producing a number. And distinguish what the data shows from what you infer, in plain words, so the owner knows which is which.
+
+Prefer a small number of decisive figures over a wall of metrics.\n\n${SOVEREIGNTY_RULES}`,
+    model: 'gpt-4o',
+    temperature: 0.3,
+  },
 ];
 
 export const AGENT_TYPES = AGENT_DEFAULTS.map((a) => a.type);

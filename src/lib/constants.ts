@@ -7,6 +7,8 @@ export const AGENT_COLORS: Record<string, string> = {
   OPERATIONS: 'from-rose-600 to-pink-600',
   FASHION: 'from-fuchsia-600 to-pink-600',
   CUSTOMER_SUPPORT: 'from-indigo-600 to-blue-600',
+  DISCOVERY: 'from-sky-600 to-cyan-600',
+  ANALYST: 'from-slate-600 to-zinc-600',
   EXECUTIVE: 'from-violet-600 to-purple-600',
   BUSINESS: 'from-amber-600 to-orange-600',
   COMMERCE: 'from-red-600 to-pink-600',

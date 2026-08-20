@@ -1,6 +1,7 @@
 import { generateAIResponse } from './provider';
 import { MemorySystem } from './memory';
 import { prisma } from '@/lib/prisma';
+import { getAgentDefault } from './agent-defaults';
 import type { AgentType } from '@/types/agent';
 
 export interface AgentChatResponse {
@@ -27,7 +28,7 @@ export class AgentSystem {
       where: { userId: this.userId, type: agentType, isEnabled: true },
     });
 
-    const systemPrompt = agentConfig?.systemPrompt ?? this.getDefaultPrompt(agentType);
+    const systemPrompt = agentConfig?.systemPrompt || this.getDefaultPrompt(agentType);
     const model = agentConfig?.model ?? 'gpt-4o';
     const temperature = agentConfig?.temperature ?? 0.7;
 
@@ -71,19 +72,21 @@ export class AgentSystem {
     };
   }
 
+  /**
+   * Falls back to the provisioned default when an account has no AgentConfig
+   * row for this type — a new or disabled agent.
+   *
+   * This reads AGENT_DEFAULTS rather than keeping its own copy. It used to hold
+   * a parallel prompt table that had drifted: different wording, a stale
+   * FASHION entry, no DISCOVERY or ANALYST, and — the part that mattered — none
+   * of them carried SOVEREIGNTY_RULES. A chat with an unprovisioned agent
+   * therefore ran with no sovereignty preamble and no prompt-injection defence.
+   */
   private getDefaultPrompt(agentType: string): string {
-    const prompts: Record<string, string> = {
-      CEO: 'You are the CEO Agent. Provide strategic business leadership, make high-level decisions, and oversee business operations. Think like a visionary CEO.',
-      SALES: 'You are the Sales Agent. Qualify leads, handle objections, suggest closing strategies, and generate follow-ups. Think like a top-performing salesperson.',
-      MARKETING: 'You are the Marketing Agent. Research markets, analyze competitors, create content strategies, and optimize campaigns. Think like a CMO.',
-      RESEARCH: 'You are the Research Agent. Conduct deep research, synthesize information, and provide comprehensive analysis. Think like a research scientist.',
-      FINANCE: 'You are the Finance Agent. Analyze financial data, optimize revenue, manage budgets, and provide financial insights. Think like a CFO.',
-      OPERATIONS: 'You are the Operations Agent. Optimize workflows, manage processes, and ensure operational efficiency. Think like a COO.',
-      FASHION: 'You are the Fashion Agent. Provide fashion advice, manage inventory, suggest trends, and optimize pricing. Think like a fashion director.',
-      CUSTOMER_SUPPORT: 'You are the Support Agent. Handle customer inquiries, resolve issues, and ensure customer satisfaction. Think like a support manager.',
-    };
-
-    return prompts[agentType] || 'You are an AI assistant. Help the user with their request.';
+    return (
+      getAgentDefault(agentType)?.systemPrompt ||
+      'You are an AI assistant. Help the user with their request.'
+    );
   }
 }
 

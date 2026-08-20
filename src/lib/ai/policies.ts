@@ -37,6 +37,12 @@ const MICRO_BUDGET_USD: Record<string, number> = {
   RESEARCH: 50,
   FINANCE: 0,
   OPERATIONS: 200,
+  // Advisory roles. Neither sends anything or moves money, so a report or a
+  // candidate list comes back without a click per item; an attached amount
+  // above the ceiling still escalates. An agent type missing from this map is
+  // blocked outright, so a new type must be added here to work at all.
+  DISCOVERY: 50,
+  ANALYST: 50,
 };
 
 /**

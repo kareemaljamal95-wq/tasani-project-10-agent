@@ -13,6 +13,7 @@ import {
   ProviderUnavailableError,
 } from '@/lib/agent-execution';
 import { setManualOverride } from '@/lib/ai/policies';
+import { AGENT_DEFAULTS } from '@/lib/ai/agent-defaults';
 
 /**
  * The three execution outcomes plus the unconfigured case.
@@ -161,6 +162,48 @@ describe('agent execution', () => {
     });
 
     expect(result.status).toBe('approval_required');
+  });
+
+  it('runs every provisioned agent type rather than blocking it as unknown', async () => {
+    // The trap this guards: evaluatePolicy blocks any agentId missing from
+    // MICRO_BUDGET_USD with "Unknown agent". A type added to AGENT_DEFAULTS but
+    // not to that map is provisioned, shown in the UI, and dead on click.
+    const user = await createTestUser();
+    await provisionAgents(user.id);
+    await giveTestSubscription(user.id);
+
+    for (const agent of AGENT_DEFAULTS) {
+      const result = await executeAgent({
+        userId: user.id,
+        actor: user.email,
+        agentId: agent.type,
+        objective: 'Summarise this quarter of activity',
+      });
+
+      expect(result.status, `${agent.type} was blocked`).not.toBe('blocked');
+    }
+  });
+
+  it('holds the approval gate for the discovery agent', async () => {
+    const user = await createTestUser();
+    await provisionAgents(user.id);
+    await giveTestSubscription(user.id);
+
+    // Discovery proposing outreach is still a proposal. It may not send.
+    const result = await executeAgent({
+      userId: user.id,
+      actor: user.email,
+      agentId: 'DISCOVERY',
+      objective: 'Contact the businesses found in this scan',
+      amountUsd: 5000,
+    });
+
+    expect(result.status).toBe('approval_required');
+
+    const approval = await prisma.approval.findFirst({
+      where: { userId: user.id },
+    });
+    expect(approval?.status).toBe('PENDING');
   });
 
   it('escalates to approval when the amount exceeds the agent budget', async () => {

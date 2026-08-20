@@ -12,6 +12,7 @@ import {
 } from '@/lib/auth/session';
 import { rateLimitShared, RateLimitError } from '@/lib/rate-limit';
 import { getManualOverride, setManualOverride } from '@/lib/ai/policies';
+import { AGENT_DEFAULTS } from '@/lib/ai/agent-defaults';
 
 beforeEach(resetDatabase);
 afterAll(async () => {
@@ -44,7 +45,10 @@ describe('onboarding', () => {
     const count = await prisma.agentConfig.count({ where: { userId: user.id } });
     // @@unique([userId, type]) plus skipDuplicates: a resumable flow can call
     // this more than once without doubling the workforce.
-    expect(count).toBe(8);
+    //
+    // Counted against AGENT_DEFAULTS rather than a literal, so adding an agent
+    // type does not fail a test that is about idempotency, not about size.
+    expect(count).toBe(AGENT_DEFAULTS.length);
   });
 });
 
