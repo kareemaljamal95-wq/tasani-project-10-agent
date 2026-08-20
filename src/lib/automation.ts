@@ -11,6 +11,13 @@ import {
   failJob,
 } from '@/lib/jobs';
 import { pruneRateLimitCounters } from '@/lib/rate-limit';
+import { runDiscoveryScan } from '@/lib/discovery/scan';
+import {
+  DiscoveryUnavailableError,
+  DiscoveryProviderError,
+} from '@/lib/discovery/provider';
+import { EntitlementError } from '@/lib/billing/entitlements';
+import { UsageLimitError } from '@/lib/billing/usage';
 import { expireLapsedSubscriptions } from '@/lib/billing/subscription';
 
 /**
@@ -31,6 +38,28 @@ const leadAgentActionPayload = z.object({
   agentType: z.string().min(1),
   objective: z.string().min(5),
 });
+
+const discoveryScanPayload = z.object({
+  /** "query @ location", e.g. "dental clinic @ Riyadh". */
+  search: z.string().min(3),
+});
+
+/**
+ * Splits a discovery trigger's search string into query and location.
+ *
+ * A trigger stores the search in `objectiveTemplate` rather than growing two
+ * more nullable columns on AutomationTrigger for a single trigger kind.
+ */
+export function parseDiscoverySearch(
+  search: string,
+): { query: string; location: string } | null {
+  const [query, ...rest] = search.split('@');
+  const location = rest.join('@').trim();
+
+  if (!query.trim() || !location) return null;
+
+  return { query: query.trim(), location };
+}
 
 /** Substitutes lead fields into a trigger's objective template. */
 export function renderObjective(
@@ -62,6 +91,14 @@ export async function evaluateTrigger(triggerId: string): Promise<{
 
   if (!trigger || !trigger.enabled) {
     return { matched: 0, enqueued: 0, skipped: 0 };
+  }
+
+  // `kind` was previously read but never acted on — every trigger ran the lead
+  // scan regardless. It now selects the behaviour, and anything that is not
+  // 'discovery' keeps the original path so existing customers' triggers are
+  // unaffected.
+  if (trigger.kind === 'discovery') {
+    return evaluateDiscoveryTrigger(trigger);
   }
 
   const cooldownBefore = new Date(
@@ -110,6 +147,54 @@ export async function evaluateTrigger(triggerId: string): Promise<{
   return { matched: leads.length, enqueued, skipped };
 }
 
+/**
+ * A discovery trigger enqueues one scan for the whole account rather than one
+ * job per lead — it is looking for businesses that are not leads yet.
+ *
+ * The idempotency key pins a scan to (trigger, day), so a trigger evaluated
+ * every five minutes by the cron scans once a day and not 288 times. That is
+ * also what keeps a metered, paid external call from being driven by the
+ * scheduler's frequency.
+ */
+async function evaluateDiscoveryTrigger(trigger: {
+  id: string;
+  userId: string;
+  objectiveTemplate: string;
+  cooldownHours: number;
+  lastRunAt: Date | null;
+}): Promise<{ matched: number; enqueued: number; skipped: number }> {
+  const cooldownBefore = new Date(
+    Date.now() - trigger.cooldownHours * 60 * 60 * 1000,
+  );
+
+  if (trigger.lastRunAt && trigger.lastRunAt > cooldownBefore) {
+    return { matched: 0, enqueued: 0, skipped: 1 };
+  }
+
+  const day = new Date().toISOString().slice(0, 10);
+
+  const result = await enqueueJob({
+    userId: trigger.userId,
+    kind: 'discovery_scan',
+    triggerId: trigger.id,
+    idempotencyKey: `trigger:${trigger.id}:discovery:${day}`,
+    // objectiveTemplate carries the search as "query @ location" for a
+    // discovery trigger; the parse and its error live in runJob.
+    payload: { search: trigger.objectiveTemplate },
+  });
+
+  await prisma.automationTrigger.update({
+    where: { id: trigger.id },
+    data: { lastRunAt: new Date() },
+  });
+
+  return {
+    matched: 1,
+    enqueued: result.enqueued ? 1 : 0,
+    skipped: result.enqueued ? 0 : 1,
+  };
+}
+
 export async function evaluateAllTriggers(): Promise<number> {
   const triggers = await prisma.automationTrigger.findMany({
     where: { enabled: true },
@@ -125,6 +210,63 @@ export async function evaluateAllTriggers(): Promise<number> {
   return total;
 }
 
+/**
+ * Runs one scheduled discovery scan.
+ *
+ * Four conditions end the job quietly rather than throwing, because each is a
+ * standing state that will not resolve by retrying: no provider configured, a
+ * plan without discovery, and an exhausted scan budget are all answers, not
+ * faults. Throwing would burn the job's retries and then park it as FAILED
+ * every single cycle. A provider error does throw — that one is transient and
+ * is exactly what the backoff exists for.
+ */
+async function runDiscoveryJob(job: {
+  id: string;
+  userId: string;
+  payload: unknown;
+}): Promise<void> {
+  const payload = discoveryScanPayload.parse(job.payload);
+  const search = parseDiscoverySearch(payload.search);
+
+  if (!search) {
+    // A malformed trigger will not fix itself on retry.
+    logger.warn('Discovery trigger has an unparseable search', {
+      jobId: job.id,
+    });
+    return;
+  }
+
+  try {
+    const result = await runDiscoveryScan({
+      userId: job.userId,
+      actor: 'automation',
+      query: search.query,
+      location: search.location,
+    });
+
+    logger.info('Scheduled discovery scan complete', {
+      jobId: job.id,
+      found: result.found,
+      imported: result.imported,
+    });
+  } catch (error) {
+    if (
+      error instanceof DiscoveryUnavailableError ||
+      error instanceof EntitlementError ||
+      error instanceof UsageLimitError
+    ) {
+      logger.info('Skipping scheduled discovery scan', {
+        jobId: job.id,
+        reason: error.name,
+      });
+      return;
+    }
+
+    if (error instanceof DiscoveryProviderError) throw error;
+    throw error;
+  }
+}
+
 /** Runs one job's work. Throws on failure so the queue can retry it. */
 async function runJob(job: {
   id: string;
@@ -132,6 +274,10 @@ async function runJob(job: {
   kind: string;
   payload: unknown;
 }): Promise<void> {
+  if (job.kind === 'discovery_scan') {
+    return runDiscoveryJob(job);
+  }
+
   if (job.kind !== 'lead_agent_action') {
     throw new Error(`Unknown job kind: ${job.kind}`);
   }

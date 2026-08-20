@@ -81,6 +81,7 @@ enum AuditType {
   auth_failed
   auth_succeeded
   rate_limited
+  discovery_scan
 }
 
 /// Human-approval gate. No outbound message may be sent without an APPROVED
@@ -348,6 +349,16 @@ model Lead {
   source      String?
   notes       String?
 
+  /// Where an imported lead came from, e.g. "google_places", and that
+  /// source's own id for it.
+  ///
+  /// Discovery needs its own dedup key: a directory listing usually has a
+  /// phone and a website but no email, and Postgres does not collide NULLs, so
+  /// @@unique([userId, email]) lets the same business be imported on every
+  /// re-scan. `source` stays the human-readable label.
+  externalSource String?
+  externalId     String?
+
   status LeadStatus @default(NEW)
 
   /// 0-100. Set by the lead-scoring agent or by hand.
@@ -365,6 +376,8 @@ model Lead {
 
   /// Deduplicates imports and automated creation within an account.
   @@unique([userId, email])
+  /// Deduplicates repeated discovery scans, including for leads with no email.
+  @@unique([userId, externalSource, externalId])
   @@index([userId, status, createdAt])
   @@index([userId, assignedAgent])
 }

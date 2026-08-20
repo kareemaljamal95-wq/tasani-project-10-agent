@@ -92,6 +92,42 @@ scheduled automation caller would have retried against it indefinitely. Point
 your readiness probe at `/api/health` and it will keep such an instance out of
 the pool.
 
+## Business discovery
+
+A scan searches a real directory for businesses in a market and imports them as
+leads. `POST /api/discovery/scan` takes a query and a location; a trigger with
+`kind: 'discovery'` runs the same path on a schedule, storing its search in
+`objectiveTemplate` as `"query @ location"`.
+
+**Nothing is invented.** Only fields the source actually published are stored.
+In particular no email address is derived — Places does not publish one, and a
+guessed `info@domain` would put real mail in front of a real business at an
+address nobody verified. Leads arrive with a phone and website where the listing
+had them, and gaps where it did not.
+
+**Dedup does not go through email.** `Lead` is unique on `(userId, email)`, and
+Postgres does not collide NULLs, so an emailless directory listing would be
+re-imported by every scheduled scan. Discovered leads carry
+`externalSource`/`externalId` with their own unique constraint, and a re-scan
+imports zero.
+
+Scans are metered separately from AI actions (`discovery_scans` vs `ai_actions`
+in `UsageCounter`). A directory lookup is not a model call, so billing it as one
+would overstate model usage on every invoice; exhausting one budget leaves the
+other usable. `discovery.enabled` is off for Starter and on for Growth (50
+scans) and Scale (300).
+
+A scheduled scan is pinned to one per (trigger, day). The Vercel cron evaluates
+triggers every five minutes; without that key it would drive 288 metered calls a
+day to a paid external service.
+
+Without `GOOGLE_PLACES_API_KEY` the endpoint answers 503 and writes nothing —
+the same posture as a missing AI provider, and it is never charged for.
+
+**Before launch:** confirm what the Places terms permit you to cache and for how
+long. Storing a name, phone and website as a CRM lead is ordinary use, but the
+retention terms are the provider's to set, not this document's.
+
 ## Billing
 
 Pricing lives in `src/lib/billing/catalog.ts` as data. No feature code branches
@@ -207,10 +243,12 @@ green check.
   it, policy evaluates, and the run is written to `AgentRun` with its `jobId`
   and to the audit log with `automation` as the actor. Re-evaluating the same
   trigger the same day enqueues nothing.
-- 77 automated tests over the execution outcomes, tenant isolation, the
+- 92 automated tests over the execution outcomes, tenant isolation, the
   approval state machine, the lead workflow, automation idempotency, model
   validation, password reset, shared rate limiting, billing and entitlements,
-  and blank-environment handling.
+  blank-environment handling, and discovery (dedup across re-scans, tenant
+  separation, entitlement and budget refusal, and failing closed with no
+  provider).
 
 ## Known gaps
 
@@ -283,6 +321,7 @@ any of them:
 | `AUTH_SECRET` | sessions | app will not boot |
 | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | agent runs and chat | those routes return 503; policy blocks still return 403 |
 | `SMTP_URL`, `OUTREACH_FROM` | sending approved outreach, password-reset email | dispatch fails, approval marked `FAILED`; reset token issued but not delivered |
+| `GOOGLE_PLACES_API_KEY` | business discovery | `/api/discovery/scan` returns 503; scheduled scans skip without failing |
 | `WORKER_API_KEY` | unattended automation | scheduled runs are refused 401; session-driven automation still works |
 | `CRON_SECRET` | the Vercel Cron GET into automation | the scheduled GET is refused 401; Vercel injects this automatically |
 

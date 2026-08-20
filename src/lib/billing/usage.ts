@@ -22,6 +22,13 @@ import { getEntitlements, EntitlementError } from './entitlements';
 
 export const USAGE_METRIC = 'ai_actions';
 
+/**
+ * A discovery scan is one metered unit of `runDiscoveryScan`, counted
+ * separately because it is not a model call. Billing a directory lookup as an
+ * AI action would overstate model usage on every invoice.
+ */
+export const DISCOVERY_METRIC = 'discovery_scans';
+
 export interface UsagePeriod {
   key: string;
   start: Date;
@@ -131,17 +138,21 @@ export class UsageLimitError extends Error {
  * A refused reservation is rolled back so a rejected request does not consume
  * quota.
  */
-export async function consumeAiAction(userId: string): Promise<UsageSnapshot> {
+export async function consumeMetric(
+  userId: string,
+  metric: string,
+  limitKey: 'aiActions.monthly' | 'discovery.monthly',
+): Promise<UsageSnapshot> {
   const entitlements = await getEntitlements(userId);
 
   if (!entitlements.active) {
     throw new EntitlementError(
-      'aiActions.monthly',
+      limitKey,
       entitlements.reason ?? 'An active subscription is required.',
     );
   }
 
-  const limit = entitlements.limits['aiActions.monthly'];
+  const limit = entitlements.limits[limitKey];
 
   const subscription = await prisma.subscription.findFirst({
     where: { userId },
@@ -155,7 +166,7 @@ export async function consumeAiAction(userId: string): Promise<UsageSnapshot> {
     INSERT INTO "UsageCounter"
       ("id", "userId", "periodKey", "periodStart", "periodEnd", "metric", "count", "createdAt", "updatedAt")
     VALUES
-      (gen_random_uuid()::text, ${userId}, ${period.key}, ${period.start}, ${period.end}, ${USAGE_METRIC}, 1, NOW(), NOW())
+      (gen_random_uuid()::text, ${userId}, ${period.key}, ${period.start}, ${period.end}, ${metric}, 1, NOW(), NOW())
     ON CONFLICT ("userId", "periodKey", "metric") DO UPDATE
       SET "count" = "UsageCounter"."count" + 1,
           "updatedAt" = NOW()
@@ -168,18 +179,18 @@ export async function consumeAiAction(userId: string): Promise<UsageSnapshot> {
     // Give the quota back: this request is being refused, so it must not be
     // charged for.
     await prisma.usageCounter.updateMany({
-      where: { userId, periodKey: period.key, metric: USAGE_METRIC },
+      where: { userId, periodKey: period.key, metric },
       data: { count: { decrement: 1 } },
     });
 
-    logger.warn('AI action limit reached', { userId, limit });
+    logger.warn('Usage limit reached', { userId, metric, limit });
     throw new UsageLimitError(used - 1, limit);
   }
 
   const threshold = thresholdFor(used, limit);
 
   if (threshold) {
-    logger.info('AI usage threshold crossed', { userId, threshold, used, limit });
+    logger.info('Usage threshold crossed', { userId, metric, threshold, used, limit });
   }
 
   return {
@@ -190,4 +201,22 @@ export async function consumeAiAction(userId: string): Promise<UsageSnapshot> {
     period,
     threshold,
   };
+}
+
+/**
+ * Reserves one AI action, or refuses. The metric every agent run counts against.
+ */
+export function consumeAiAction(userId: string): Promise<UsageSnapshot> {
+  return consumeMetric(userId, USAGE_METRIC, 'aiActions.monthly');
+}
+
+/**
+ * Reserves one discovery scan, or refuses.
+ *
+ * Separate from the AI-action budget on purpose: a scan calls a directory, not
+ * a model. Exhausting discovery must leave the agent workforce usable, and
+ * exhausting agent runs must not silently stop discovery.
+ */
+export function consumeDiscoveryScan(userId: string): Promise<UsageSnapshot> {
+  return consumeMetric(userId, DISCOVERY_METRIC, 'discovery.monthly');
 }

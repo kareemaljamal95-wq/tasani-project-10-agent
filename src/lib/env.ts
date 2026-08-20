@@ -40,6 +40,12 @@ const envSchema = z.object({
    */
   CRON_SECRET: z.string().min(16).optional(),
 
+  /**
+   * Google Places API key for business discovery. Absent, discovery fails
+   * closed — the same posture as a missing AI provider, never a fixture.
+   */
+  GOOGLE_PLACES_API_KEY: z.string().min(1).optional(),
+
   // --- Billing -------------------------------------------------------------
   // PAYPAL_CLIENT_SECRET must never reach the browser. It is read only in
   // src/lib/billing/providers/paypal.ts, which is server-only.

@@ -17,7 +17,7 @@ import { logger } from '@/lib/logger';
  *  - every outcome recorded on the row, so failures are visible
  */
 
-export const JOB_KINDS = ['lead_agent_action'] as const;
+export const JOB_KINDS = ['lead_agent_action', 'discovery_scan'] as const;
 export type JobKind = (typeof JOB_KINDS)[number];
 
 /** A job locked for longer than this is assumed to belong to a dead worker. */

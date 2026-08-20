@@ -12,6 +12,22 @@ import { executeAgent } from '@/lib/agent-execution';
 import { enqueueJob } from '@/lib/jobs';
 import { evaluateTrigger, processJobs, renderObjective } from '@/lib/automation';
 import { validateModelSelection } from '@/lib/ai/models';
+import { __setDiscoveryProvider } from '@/lib/discovery';
+import type {
+  DiscoveredBusiness,
+  DiscoveryProvider,
+} from '@/lib/discovery/provider';
+
+/** Substitutes the directory call; everything downstream of it runs for real. */
+class FakeDiscoveryProvider implements DiscoveryProvider {
+  readonly name = 'google_places';
+  isConfigured(): boolean {
+    return true;
+  }
+  async search(): Promise<DiscoveredBusiness[]> {
+    return [{ externalId: 'places/AAA', name: 'Riyadh Dental Centre' }];
+  }
+}
 
 vi.mock('@/lib/ai/decision', () => ({
   runAgentDecision: vi.fn(async () => ({
@@ -234,6 +250,99 @@ describe('automation', () => {
       where: { userId: user.id, leadId: lead.id },
     });
     expect(run?.jobId).toBeTruthy();
+  });
+
+  it('drives a discovery trigger into imported leads', async () => {
+    const user = await createTestUser();
+    await giveTestSubscription(user.id);
+    __setDiscoveryProvider(new FakeDiscoveryProvider());
+
+    const trigger = await prisma.automationTrigger.create({
+      data: {
+        userId: user.id,
+        name: 'Find dental clinics',
+        kind: 'discovery',
+        agentType: 'DISCOVERY',
+        objectiveTemplate: 'dental clinic @ Riyadh',
+        enabled: true,
+      },
+    });
+
+    const evaluation = await evaluateTrigger(trigger.id);
+    expect(evaluation.enqueued).toBe(1);
+
+    const drained = await processJobs('test-worker', 5);
+    expect(drained.succeeded).toBe(1);
+
+    const leads = await prisma.lead.findMany({ where: { userId: user.id } });
+    expect(leads).toHaveLength(1);
+    expect(leads[0].externalSource).toBe('google_places');
+
+    __setDiscoveryProvider(null);
+  });
+
+  it('scans once per day however often the cron evaluates the trigger', async () => {
+    // The cron runs every five minutes. Without the (trigger, day) idempotency
+    // key that would be 288 metered calls to a paid external directory.
+    const user = await createTestUser();
+    await giveTestSubscription(user.id);
+    __setDiscoveryProvider(new FakeDiscoveryProvider());
+
+    const trigger = await prisma.automationTrigger.create({
+      data: {
+        userId: user.id,
+        name: 'Find dental clinics',
+        kind: 'discovery',
+        agentType: 'DISCOVERY',
+        objectiveTemplate: 'dental clinic @ Riyadh',
+        enabled: true,
+        cooldownHours: 0,
+      },
+    });
+
+    await evaluateTrigger(trigger.id);
+    const again = await evaluateTrigger(trigger.id);
+
+    expect(again.enqueued).toBe(0);
+    expect(await prisma.job.count({ where: { userId: user.id } })).toBe(1);
+
+    __setDiscoveryProvider(null);
+  });
+
+  it('leaves a lead_status trigger on its original path', async () => {
+    // evaluateTrigger now branches on `kind`. Everything that is not
+    // 'discovery' must behave exactly as before, including a trigger whose
+    // kind was never one of the handled values.
+    const user = await createTestUser();
+    await provisionAgents(user.id);
+    await giveTestSubscription(user.id);
+
+    await createLead({
+      userId: user.id,
+      actor: user.email,
+      companyName: 'Acme Retail',
+      email: 'buyer@acme.test',
+    });
+
+    const trigger = await prisma.automationTrigger.create({
+      data: {
+        userId: user.id,
+        name: 'Contact new leads',
+        kind: 'lead_status',
+        leadStatus: 'NEW',
+        agentType: 'SALES',
+        objectiveTemplate: 'Write a first outreach email to {{company}}',
+        enabled: true,
+      },
+    });
+
+    const evaluation = await evaluateTrigger(trigger.id);
+
+    expect(evaluation.matched).toBe(1);
+    expect(evaluation.enqueued).toBe(1);
+
+    const job = await prisma.job.findFirstOrThrow({ where: { userId: user.id } });
+    expect(job.kind).toBe('lead_agent_action');
   });
 
   it('does not run a disabled trigger', async () => {

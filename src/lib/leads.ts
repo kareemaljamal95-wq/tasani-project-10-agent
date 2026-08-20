@@ -20,7 +20,7 @@ export class LeadNotFoundError extends Error {
 
 export class DuplicateLeadError extends Error {
   constructor() {
-    super('A lead with that email already exists in this account.');
+    super('This lead already exists in this account.');
     this.name = 'DuplicateLeadError';
   }
 }
@@ -37,6 +37,9 @@ export interface CreateLeadInput {
   notes?: string;
   assignedAgent?: string;
   score?: number;
+  /** Set by an importer, e.g. 'google_places' and that source's own id. */
+  externalSource?: string;
+  externalId?: string;
 }
 
 export async function createLead(input: CreateLeadInput): Promise<Lead> {
@@ -53,6 +56,8 @@ export async function createLead(input: CreateLeadInput): Promise<Lead> {
         notes: input.notes ?? null,
         assignedAgent: input.assignedAgent ?? 'SALES',
         score: input.score ?? 0,
+        externalSource: input.externalSource ?? null,
+        externalId: input.externalId ?? null,
       },
     });
 
@@ -69,8 +74,10 @@ export async function createLead(input: CreateLeadInput): Promise<Lead> {
 
     return lead;
   } catch (error) {
-    // @@unique([userId, email]) is what makes repeated imports and automated
-    // creation safe to retry.
+    // Either unique constraint can raise this: (userId, email) for a manual or
+    // emailed duplicate, (userId, externalSource, externalId) for a business a
+    // discovery scan has already imported. Both mean the same thing to the
+    // caller — this lead is already here — so both surface as DuplicateLead.
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === 'P2002'

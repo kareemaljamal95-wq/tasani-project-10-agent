@@ -24,6 +24,11 @@ export interface PlanLimits {
   /** Billable agent executions per billing period. */
   'aiActions.monthly': number;
   'leads.enabled': boolean;
+  /** Business discovery: find real businesses in a market and import them. */
+  'discovery.enabled': boolean;
+  /** Discovery scans per billing period. Separate from aiActions.monthly
+   *  because a scan calls a directory, not a model. */
+  'discovery.monthly': number;
   'approvals.enabled': boolean;
   'advancedAutomation.enabled': boolean;
   'prioritySupport.enabled': boolean;
@@ -62,6 +67,8 @@ export const PLAN_CATALOG: CatalogPlan[] = [
       'seats.max': 1,
       'aiActions.monthly': 500,
       'leads.enabled': true,
+      'discovery.enabled': false,
+      'discovery.monthly': 0,
       'approvals.enabled': true,
       'advancedAutomation.enabled': false,
       'prioritySupport.enabled': false,
@@ -90,6 +97,8 @@ export const PLAN_CATALOG: CatalogPlan[] = [
       'seats.max': 5,
       'aiActions.monthly': 3000,
       'leads.enabled': true,
+      'discovery.enabled': true,
+      'discovery.monthly': 50,
       'approvals.enabled': true,
       'advancedAutomation.enabled': true,
       'prioritySupport.enabled': false,
@@ -118,6 +127,8 @@ export const PLAN_CATALOG: CatalogPlan[] = [
       'seats.max': 15,
       'aiActions.monthly': 15000,
       'leads.enabled': true,
+      'discovery.enabled': true,
+      'discovery.monthly': 300,
       'approvals.enabled': true,
       'advancedAutomation.enabled': true,
       'prioritySupport.enabled': true,
@@ -148,6 +159,8 @@ export const UNENTITLED_LIMITS: PlanLimits = {
   'automations.max': 0,
   'seats.max': 1,
   'aiActions.monthly': 0,
+  'discovery.enabled': false,
+  'discovery.monthly': 0,
   'leads.enabled': false,
   'approvals.enabled': false,
   'advancedAutomation.enabled': false,

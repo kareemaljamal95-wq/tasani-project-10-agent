@@ -166,7 +166,11 @@ export class EntitlementError extends Error {
  */
 export async function requireCapability(
   userId: string,
-  capability: 'leads.enabled' | 'approvals.enabled' | 'advancedAutomation.enabled',
+  capability:
+    | 'leads.enabled'
+    | 'approvals.enabled'
+    | 'advancedAutomation.enabled'
+    | 'discovery.enabled',
 ): Promise<Entitlements> {
   const entitlements = await getEntitlements(userId);
 
