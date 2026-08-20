@@ -32,10 +32,92 @@ function isAuthorizedWorker(req: Request): boolean {
   const provided = req.headers.get('x-worker-key');
   if (!provided) return false;
 
-  // Compared through a hash so the check is constant-time regardless of length.
+  return secretsMatch(provided, expected);
+}
+
+/**
+ * Constant-time comparison. Hashing first makes the comparison independent of
+ * the secrets' lengths, which timingSafeEqual alone is not.
+ */
+function secretsMatch(provided: string, expected: string): boolean {
   const a = crypto.createHash('sha256').update(provided).digest();
   const b = crypto.createHash('sha256').update(expected).digest();
   return crypto.timingSafeEqual(a, b);
+}
+
+/**
+ * Vercel Cron's own authorization.
+ *
+ * Vercel invokes a scheduled path with **GET** and presents `CRON_SECRET` as a
+ * bearer token; it cannot be made to send `x-worker-key`. So the scheduler path
+ * needs its own door — but the same posture as the worker one: with no
+ * `CRON_SECRET` configured this returns false and the door stays shut.
+ */
+function isAuthorizedCron(req: Request): boolean {
+  const expected = env().CRON_SECRET;
+  if (!expected) return false;
+
+  const header = req.headers.get('authorization');
+  if (!header?.startsWith('Bearer ')) return false;
+
+  return secretsMatch(header.slice('Bearer '.length), expected);
+}
+
+/**
+ * One automation cycle: evaluate triggers, then drain the queue.
+ *
+ * `scope` decides how much of the fleet is in play. A scheduler credential
+ * drives every account; a signed-in operator drives only their own, and gets a
+ * smaller drain budget so one person's manual poke cannot monopolise a worker.
+ */
+async function runCycle(
+  scope: { kind: 'scheduler' } | { kind: 'session'; userId: string },
+) {
+  const workerId = `worker-${crypto.randomUUID().slice(0, 8)}`;
+  let enqueued = 0;
+
+  if (scope.kind === 'scheduler') {
+    enqueued = await evaluateAllTriggers();
+  } else {
+    const triggers = await prisma.automationTrigger.findMany({
+      where: { userId: scope.userId, enabled: true },
+      select: { id: true },
+    });
+
+    const { evaluateTrigger } = await import('@/lib/automation');
+    for (const trigger of triggers) {
+      const result = await evaluateTrigger(trigger.id);
+      enqueued += result.enqueued;
+    }
+  }
+
+  const drained = await processJobs(workerId, scope.kind === 'scheduler' ? 25 : 5);
+
+  logger.info('Automation cycle complete', { enqueued, ...drained });
+
+  return NextResponse.json({ ok: true, enqueued, ...drained });
+}
+
+/**
+ * The scheduled entry point (Vercel Cron and anything else that can only GET).
+ *
+ * Deliberately no session fallback: a GET that mutates state and accepts a
+ * cookie is reachable from any page the operator happens to visit. Only a
+ * scheduler secret opens this one.
+ */
+export async function GET(req: Request) {
+  try {
+    if (!isAuthorizedCron(req) && !isAuthorizedWorker(req)) {
+      return NextResponse.json(
+        { error: 'A scheduler credential is required.' },
+        { status: 401 },
+      );
+    }
+
+    return await runCycle({ kind: 'scheduler' });
+  } catch (error) {
+    return handleRouteError(error, 'GET /api/automation/run');
+  }
 }
 
 export async function POST(req: Request) {
@@ -50,32 +132,11 @@ export async function POST(req: Request) {
       );
     }
 
-    const workerId = `worker-${crypto.randomUUID().slice(0, 8)}`;
-
-    // A signed-in operator can only evaluate their own triggers; the scheduler
-    // credential evaluates everyone's.
-    let enqueued = 0;
-
-    if (workerAuthorized) {
-      enqueued = await evaluateAllTriggers();
-    } else if (session) {
-      const triggers = await prisma.automationTrigger.findMany({
-        where: { userId: session.userId, enabled: true },
-        select: { id: true },
-      });
-
-      const { evaluateTrigger } = await import('@/lib/automation');
-      for (const trigger of triggers) {
-        const result = await evaluateTrigger(trigger.id);
-        enqueued += result.enqueued;
-      }
-    }
-
-    const drained = await processJobs(workerId, workerAuthorized ? 25 : 5);
-
-    logger.info('Automation cycle complete', { enqueued, ...drained });
-
-    return NextResponse.json({ ok: true, enqueued, ...drained });
+    return await runCycle(
+      workerAuthorized
+        ? { kind: 'scheduler' }
+        : { kind: 'session', userId: session!.userId },
+    );
   } catch (error) {
     return handleRouteError(error, 'POST /api/automation/run');
   }

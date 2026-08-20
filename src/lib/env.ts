@@ -33,6 +33,13 @@ const envSchema = z.object({
    */
   WORKER_API_KEY: z.string().min(32).optional(),
 
+  /**
+   * Vercel Cron's bearer token for the scheduled automation call. Vercel
+   * generates and injects it; set it manually on any other platform that
+   * schedules a GET. Absent, the GET scheduler path is closed.
+   */
+  CRON_SECRET: z.string().min(16).optional(),
+
   // --- Billing -------------------------------------------------------------
   // PAYPAL_CLIENT_SECRET must never reach the browser. It is read only in
   // src/lib/billing/providers/paypal.ts, which is server-only.
@@ -61,10 +68,33 @@ export type Env = z.infer<typeof envSchema>;
 
 let cached: Env | null = null;
 
+/**
+ * A variable present in a hosting dashboard with an empty box is, to an
+ * operator, the same thing as a variable that was never set. Zod does not agree
+ * — `.default()` and `.optional()` only fire on `undefined`, so `''` reaches
+ * the validators and fails them.
+ *
+ * This is not hypothetical: a blank `NEXT_PUBLIC_APP_URL` in the Vercel
+ * production environment took down the build (`new URL('')` in the root
+ * layout) and would have taken down checkout and password reset with it, since
+ * both build absolute URLs from this value. Dropping empty strings here means
+ * one blank box degrades to the documented default instead of throwing.
+ */
+function withoutBlanks(source: NodeJS.ProcessEnv): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(source)) {
+    if (typeof value === 'string' && value.trim() === '') continue;
+    out[key] = value;
+  }
+
+  return out;
+}
+
 export function env(): Env {
   if (cached) return cached;
 
-  const parsed = envSchema.safeParse(process.env);
+  const parsed = envSchema.safeParse(withoutBlanks(process.env));
 
   if (!parsed.success) {
     const issues = parsed.error.issues

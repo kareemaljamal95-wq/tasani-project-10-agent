@@ -127,6 +127,47 @@ worker expires lapsed rows on its normal cycle.
 
 ## Deploying
 
+### Vercel
+
+`vercel.json` sets the build command to `prisma migrate deploy && next build`.
+That is load-bearing: `docker-entrypoint.sh` is the only other place migrations
+run, and Vercel never executes it. Without this the platform would serve traffic
+against an unmigrated database.
+
+Automation runs from the `crons` entry in the same file, every five minutes.
+Vercel Cron invokes the path with **GET** and presents `CRON_SECRET` as a bearer
+token — it cannot send `x-worker-key` — so `/api/automation/run` exports a GET
+handler for that door alone. The GET path takes no session fallback: a
+state-changing GET that accepts a cookie is reachable from any page the operator
+visits. `POST` is unchanged and still serves both the worker key and a signed-in
+session.
+
+`maxDuration` is declared in the route (`export const maxDuration = 60`), not in
+`vercel.json`. A drain of 25 jobs that each make a model call does not fit the
+platform default.
+
+After the first successful deploy, run `npm run db:catalog` once against the
+production database — plans, prices and the Founding Partner offer are projected
+from `src/lib/billing/catalog.ts`, not from a migration.
+
+### Blank environment variables
+
+A variable set to an empty string in a hosting dashboard is treated as unset:
+`src/lib/env.ts` drops blank values before validation. This is not tidiness. A
+blank `NEXT_PUBLIC_APP_URL` in Vercel Production failed the build outright —
+`new URL('')` at module scope in the root layout, reported as
+`Failed to collect page data for /_not-found` — and would have broken checkout
+and password reset, which build absolute URLs from the same value, while
+`/api/health` returned 503 and kept the instance out of the pool. `tests/env.test.ts`
+holds the guard, including the case that must *not* degrade: a blank
+`AUTH_SECRET` still refuses to boot rather than defaulting to something.
+
+The fallback is `http://localhost:3000`, so a green build proves nothing on its
+own. Check `sitemap.xml` after deploying — if `<loc>` shows localhost, the
+variable is still wrong.
+
+### Docker / Cloud Run
+
 `Dockerfile` produces a standalone image. `docker-entrypoint.sh` runs
 `prisma migrate deploy` under `set -e`, so a failed migration stops the
 container instead of serving traffic against a database whose shape does not
@@ -166,9 +207,10 @@ green check.
   it, policy evaluates, and the run is written to `AgentRun` with its `jobId`
   and to the audit log with `automation` as the actor. Re-evaluating the same
   trigger the same day enqueues nothing.
-- 38 automated tests over the execution outcomes, tenant isolation, the
+- 77 automated tests over the execution outcomes, tenant isolation, the
   approval state machine, the lead workflow, automation idempotency, model
-  validation, password reset and shared rate limiting.
+  validation, password reset, shared rate limiting, billing and entitlements,
+  and blank-environment handling.
 
 ## Known gaps
 
@@ -242,6 +284,7 @@ any of them:
 | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | agent runs and chat | those routes return 503; policy blocks still return 403 |
 | `SMTP_URL`, `OUTREACH_FROM` | sending approved outreach, password-reset email | dispatch fails, approval marked `FAILED`; reset token issued but not delivered |
 | `WORKER_API_KEY` | unattended automation | scheduled runs are refused 401; session-driven automation still works |
+| `CRON_SECRET` | the Vercel Cron GET into automation | the scheduled GET is refused 401; Vercel injects this automatically |
 
 ## Architecture notes
 
