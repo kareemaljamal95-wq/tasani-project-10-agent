@@ -165,10 +165,27 @@ worker expires lapsed rows on its normal cycle.
 
 ### Vercel
 
-`vercel.json` sets the build command to `prisma migrate deploy && next build`.
-That is load-bearing: `docker-entrypoint.sh` is the only other place migrations
-run, and Vercel never executes it. Without this the platform would serve traffic
-against an unmigrated database.
+`vercel.json` runs `scripts/vercel-build.sh`, which applies migrations and then
+builds. That is load-bearing: `docker-entrypoint.sh` is the only other place
+migrations run, and Vercel never executes it. Without it the platform serves
+traffic against an unmigrated database — and because `/api/health` proves
+liveness with `SELECT 1`, which succeeds on an empty database, the instance
+reports healthy while every real query fails on a missing table.
+
+Migrations therefore run **at build time**, which has three consequences the
+script handles and a bare `prisma migrate deploy && next build` does not:
+
+- **`DATABASE_URL` must be set for the build, not just the runtime.** Without it
+  Prisma fails with `Validation Error Count: 1`, which names nothing. The script
+  fails with the variable name and where to set it.
+- **Preview deployments are skipped by default.** A preview build reads the same
+  `DATABASE_URL`, so migrating from one would apply an unreviewed migration to
+  production. Set `RUN_MIGRATIONS_ON_PREVIEW=1` if previews have their own
+  database.
+- **Migrations cannot run over a transaction pooler** (pgBouncer, Supabase
+  `:6543`, a `*-pooler` Neon host). The app wants the pooled URL; migrations
+  need a direct one. Set `DIRECT_DATABASE_URL` to the direct connection string
+  and the script uses it for migrations only. With no pooler, leave it unset.
 
 Automation runs from the `crons` entry in the same file, every five minutes.
 Vercel Cron invokes the path with **GET** and presents `CRON_SECRET` as a bearer
@@ -321,6 +338,7 @@ any of them:
 | `AUTH_SECRET` | sessions | app will not boot |
 | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` | agent runs and chat | those routes return 503; policy blocks still return 403 |
 | `SMTP_URL`, `OUTREACH_FROM` | sending approved outreach, password-reset email | dispatch fails, approval marked `FAILED`; reset token issued but not delivered |
+| `DIRECT_DATABASE_URL` | migrations, when `DATABASE_URL` is pooled | the build fails at `prisma migrate deploy`; unset is correct for a direct connection |
 | `GOOGLE_PLACES_API_KEY` | business discovery | `/api/discovery/scan` returns 503; scheduled scans skip without failing |
 | `WORKER_API_KEY` | unattended automation | scheduled runs are refused 401; session-driven automation still works |
 | `CRON_SECRET` | the Vercel Cron GET into automation | the scheduled GET is refused 401; Vercel injects this automatically |

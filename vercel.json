@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "prisma migrate deploy && next build",
+  "buildCommand": "bash scripts/vercel-build.sh",
   "crons": [
     {
       "path": "/api/automation/run",
