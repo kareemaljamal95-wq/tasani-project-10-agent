@@ -44,6 +44,19 @@ COPY prisma ./prisma/
 RUN npm ci --omit=dev --ignore-scripts
 
 # ---------------------------------------------------------------------------
+# Prisma CLI, installed on its own so it brings its whole dependency tree.
+#
+# The runner used to cherry-pick `prisma` and `@prisma` out of the production
+# tree. That misses transitive dependencies — `effect`, pulled in by
+# @prisma/config — so `prisma migrate deploy` died at container start with
+# MODULE_NOT_FOUND, and `set -e` in the entrypoint turned every start into a
+# crashloop: build green, deploy "COMPLETED", 503 "no healthy upstream".
+# ---------------------------------------------------------------------------
+FROM base AS prismacli
+WORKDIR /pcli
+RUN npm install --no-save --omit=optional prisma@6.19.3
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 FROM base AS runner
@@ -64,8 +77,9 @@ COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/prisma.config.ts* ./
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=deps /app/node_modules/@prisma ./node_modules/@prisma
-COPY --from=deps /app/node_modules/prisma ./node_modules/prisma
-COPY --from=deps /app/node_modules/.bin ./node_modules/.bin
+# Complete CLI tree, kept out of ./node_modules so it cannot shadow the
+# standalone bundle's own copies.
+COPY --from=prismacli /pcli/node_modules ./prisma-cli/node_modules
 
 # `prisma migrate deploy` applies the committed migration history and refuses
 # to act on drift. The previous script ran `prisma db push --accept-data-loss`,

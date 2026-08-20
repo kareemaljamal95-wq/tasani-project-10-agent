@@ -7,7 +7,7 @@
 set -e
 
 echo "Applying database migrations..."
-npx prisma migrate deploy
+node ./prisma-cli/node_modules/prisma/build/index.js migrate deploy --schema ./prisma/schema.prisma
 
 echo "Starting Tasami OS..."
 exec node server.js
