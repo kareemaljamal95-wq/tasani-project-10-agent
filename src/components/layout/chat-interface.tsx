@@ -23,7 +23,7 @@ export function ChatInterface({ defaultAgent, fullScreen = false, placeholder = 
     {
       id: 'welcome',
       role: 'assistant',
-      content: `Hello! I'm ${defaultAgent ? `the ${defaultAgent} Agent` : 'KARMISH'}. How can I help you today?`,
+      content: `Hello! I'm ${defaultAgent ? `the ${defaultAgent} Agent` : 'Tasami'}. How can I help you today?`,
       timestamp: new Date(),
     },
   ]);

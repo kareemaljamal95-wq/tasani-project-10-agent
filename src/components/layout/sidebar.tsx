@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Bot, Brain, Calendar, TrendingUp, Briefcase, ShoppingCart, Sparkles, LayoutDashboard, ChevronLeft, CreditCard, ShieldCheck, Users, X } from 'lucide-react';
+import { Bot, Brain, Calendar, TrendingUp, Briefcase, ShoppingCart, Sparkles, LayoutDashboard, ChevronLeft, CreditCard, ShieldCheck, Users, X, Workflow } from 'lucide-react';
 
 const navItems = [
   { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
@@ -11,6 +11,7 @@ const navItems = [
   // to work through, and nothing goes out until they do.
   { href: '/approvals', icon: ShieldCheck, label: 'Approvals' },
   { href: '/leads', icon: Users, label: 'Leads' },
+  { href: '/automations', icon: Workflow, label: 'Automations' },
   { href: '/executive', icon: Calendar, label: 'Executive' },
   { href: '/business', icon: Briefcase, label: 'Business' },
   { href: '/commerce', icon: ShoppingCart, label: 'Commerce' },
@@ -33,7 +34,7 @@ export function Sidebar() {
             <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-violet-600 to-purple-600 flex items-center justify-center">
               <Bot className="h-4 w-4 text-white" />
             </div>
-            <span className="font-bold text-white">KARMISH</span>
+            <span className="font-bold text-white">TASAMI</span>
           </Link>
         )}
         {collapsed && (

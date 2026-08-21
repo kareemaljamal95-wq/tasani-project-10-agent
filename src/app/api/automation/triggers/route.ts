@@ -129,3 +129,30 @@ export async function PATCH(req: Request) {
     return handleRouteError(error, 'PATCH /api/automation/triggers');
   }
 }
+
+const deleteSchema = z.object({ id: z.string().min(1) });
+
+export async function DELETE(req: Request) {
+  try {
+    const session = await requireUser();
+    rateLimit(`triggers-write:${session.userId}`, 30);
+
+    const { id } = await parseBody(req, deleteSchema);
+
+    // Scoped by userId so a guessed id reads as not-found rather than deleting
+    // another account's automation. Queued Job rows keep their history; the
+    // schema nulls their triggerId rather than cascading, so an execution
+    // record survives the automation that produced it.
+    const removed = await prisma.automationTrigger.deleteMany({
+      where: { id, userId: session.userId },
+    });
+
+    if (removed.count === 0) {
+      return NextResponse.json({ error: 'Trigger not found.' }, { status: 404 });
+    }
+
+    return NextResponse.json({ deleted: true });
+  } catch (error) {
+    return handleRouteError(error, 'DELETE /api/automation/triggers');
+  }
+}
