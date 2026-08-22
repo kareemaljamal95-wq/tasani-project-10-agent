@@ -6,7 +6,19 @@ import { prisma } from '@/lib/prisma';
 
 export const dynamic = 'force-dynamic';
 
-export const metadata = { title: 'الإدارة' };
+/**
+ * The title is resolved per-request rather than exported statically.
+ *
+ * A module-scope `metadata` export is evaluated before the component runs, so
+ * its value reached the streamed payload even for a visitor who then got a
+ * 404 — telling them an admin page exists at this path, which is the one thing
+ * choosing notFound() over a 403 was meant to avoid.
+ */
+export async function generateMetadata() {
+  const session = await getSession();
+  if (session && isAdminEmail(session.email)) return { title: 'الإدارة' };
+  return {};
+}
 
 /** Statuses that mean the customer currently has paid access. */
 const ACTIVE = [
