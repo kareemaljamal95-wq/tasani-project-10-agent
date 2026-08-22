@@ -44,7 +44,7 @@ function getModelProvider(model: string): AIProvider {
   return 'openai';
 }
 
-export async function generateAIResponse(params: {
+async function callProvider(params: {
   messages: Message[];
   systemPrompt?: string;
   model?: string;
@@ -150,4 +150,75 @@ export async function generateAIResponse(params: {
 
     throw new AIProviderError(provider, model, error);
   }
+}
+
+/**
+ * Ordered fallback across whichever providers are actually configured.
+ *
+ * Each agent stores one model, so a single provider outage — or an unpaid
+ * balance — took the whole workforce down: the default agents point at
+ * `gpt-4o` and `claude-sonnet-4-5`, so with only Gemini funded every agent
+ * failed on click while the product looked fine.
+ *
+ * Only providers holding a key are tried, so this never turns a missing
+ * credential into a confusing downstream error. The requested model is always
+ * attempted first; the rest are a safety net, and the response reports which
+ * provider actually answered so a silent substitution is visible.
+ */
+function fallbackModels(requested: string): string[] {
+  const preferred: Record<AIProvider, string> = {
+    openai: 'gpt-4o-mini',
+    anthropic: 'claude-haiku-4-5',
+    gemini: 'gemini-3.6-flash',
+  };
+
+  const configured: Record<AIProvider, boolean> = {
+    openai: Boolean(process.env.OPENAI_API_KEY),
+    anthropic: Boolean(process.env.ANTHROPIC_API_KEY),
+    gemini: Boolean(process.env.GEMINI_API_KEY),
+  };
+
+  const seen = new Set<string>([requested]);
+  const chain = [requested];
+
+  for (const provider of ['gemini', 'openai', 'anthropic'] as AIProvider[]) {
+    const candidate = preferred[provider];
+    if (!configured[provider]) continue;
+    if (provider === getModelProvider(requested)) continue;
+    if (seen.has(candidate)) continue;
+    seen.add(candidate);
+    chain.push(candidate);
+  }
+
+  return chain;
+}
+
+export async function generateAIResponse(params: {
+  messages: Message[];
+  systemPrompt?: string;
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
+}): Promise<AIResponse> {
+  const requested = params.model ?? 'gpt-4o';
+  const chain = fallbackModels(requested);
+  let lastError: unknown;
+
+  for (const model of chain) {
+    try {
+      return await callProvider({ ...params, model });
+    } catch (error) {
+      lastError = error;
+      logger.warn('AI provider failed, trying next in chain', {
+        failed: model,
+        remaining: chain.slice(chain.indexOf(model) + 1),
+      });
+    }
+  }
+
+  // Every configured provider refused. Surface the original failure rather
+  // than the last one, since the requested model is what the caller asked for.
+  throw lastError instanceof Error
+    ? lastError
+    : new AIProviderError(getModelProvider(requested), requested, lastError);
 }
