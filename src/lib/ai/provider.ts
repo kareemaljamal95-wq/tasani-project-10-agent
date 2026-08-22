@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 import Anthropic from '@anthropic-ai/sdk';
 import { logger } from '@/lib/logger';
 
@@ -34,7 +34,7 @@ export interface AIResponse {
 }
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || '' });
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || '' });
 
 function getModelProvider(model: string): AIProvider {
@@ -107,23 +107,31 @@ export async function generateAIResponse(params: {
       }
 
       case 'gemini': {
-        const geminiModel = genAI.getGenerativeModel({ model });
-        const chat = geminiModel.startChat({
-          history: messages.slice(0, -1).map((m) => ({
+        // The unified @google/genai client takes the whole conversation as
+        // `contents` rather than a chat session plus a trailing message, so
+        // every turn is mapped in one pass. `model` is a plain string here, not
+        // a pre-bound model object.
+        const result = await genAI.models.generateContent({
+          model,
+          contents: messages.map((m) => ({
             role: m.role === 'assistant' ? 'model' : 'user',
             parts: [{ text: m.content }],
           })),
-          systemInstruction: systemPrompt ? { role: 'user', parts: [{ text: systemPrompt }] } : undefined,
+          ...(systemPrompt
+            ? { config: { systemInstruction: systemPrompt } }
+            : {}),
         });
 
-        const lastMsg = messages[messages.length - 1];
-        const result = await chat.sendMessage(lastMsg.content);
-        const response = result.response;
-
         return {
-          content: response.text(),
+          // `text` is a property on the new client, not a method.
+          content: result.text ?? '',
           model,
           provider: 'gemini',
+          usage: {
+            promptTokens: result.usageMetadata?.promptTokenCount || 0,
+            completionTokens: result.usageMetadata?.candidatesTokenCount || 0,
+            totalTokens: result.usageMetadata?.totalTokenCount || 0,
+          },
         };
       }
 
