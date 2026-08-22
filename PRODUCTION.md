@@ -337,6 +337,14 @@ approved message cannot leave. Set `OUTREACH_TRANSPORT=smtp` with `SMTP_URL`
 and `OUTREACH_FROM` to enable it. This is deliberate: an unconfigured install
 cannot silently send.
 
+**Testing rate limits from a proxy pool gives a false negative.** Fifteen rapid
+failed logins from this project's tooling all returned 401 and never 429, which
+looks like a dead limiter. It is not: the requests left through an egress pool
+spanning `160.79.106.128-141`, so each landed in its own per-IP bucket. Repeating
+the run with a fixed `x-forwarded-for` produced 401 ten times then 429, exactly
+at the eleventh request. `clientIp` and the limiter are both correct — verify
+with a pinned client identity, or the result means nothing.
+
 **Rate limiting is split by sensitivity.** Sensitive endpoints — auth,
 password reset, agent execution, lead writes and lead actions — count in
 Postgres (`RateLimitCounter`), so the budget holds across replicas. Read-heavy
