@@ -27,8 +27,11 @@ export const SUPPORTED_MODELS: ModelSpec[] = [
   { id: 'claude-opus-4-1', provider: 'anthropic', label: 'Claude Opus 4.1' },
   { id: 'claude-haiku-4-5', provider: 'anthropic', label: 'Claude Haiku 4.5' },
 
-  { id: 'gemini-2.5-pro', provider: 'gemini', label: 'Gemini 2.5 Pro' },
-  { id: 'gemini-2.5-flash', provider: 'gemini', label: 'Gemini 2.5 Flash' },
+  // Verified live against the API on 2026-08-22. gemini-2.5-flash and
+  // gemini-2.5-pro were both retired and answer 404 ("no longer available to
+  // new users"), which surfaced as a 502 at call time — exactly the failure
+  // mode PRODUCTION.md warns about for a stale registry.
+  { id: 'gemini-3.6-flash', provider: 'gemini', label: 'Gemini 3.6 Flash' },
 ];
 
 export function findModel(id: string): ModelSpec | undefined {
