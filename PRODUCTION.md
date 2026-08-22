@@ -163,6 +163,31 @@ worker expires lapsed rows on its normal cycle.
 
 ## Deploying
 
+### Northflank (current production)
+
+Live at `web--web--rpsnqydlz8bs.code.run`. Build is the repository `Dockerfile`;
+`vercel.json` and `railway.json` are inert here.
+
+`NEXT_PUBLIC_APP_URL` is a **build argument**, not a runtime variable — Next
+inlines `NEXT_PUBLIC_*` at build time. Changing the domain therefore needs a
+rebuild, not a restart.
+
+Secrets live in the `app-secrets` group. **Write them by reading the group
+first, merging, and sending it whole.** A PATCH replaces `secrets.variables`
+rather than merging into it; sending a single key once wiped five others.
+
+Automation runs as the `automation-tick` cron job, every five minutes, calling
+`/api/automation/run` with `x-worker-key`. It uses a small `curlimages/curl`
+image rather than the application image — the tick is one HTTP call, so it needs
+neither a build nor the app's dependencies. Two details that cost time:
+`customCommand` does not go through a shell, so the command is wrapped in
+`sh -c` for `$WORKER_API_KEY` to expand; and `curl -f` is deliberate, so a 401
+or 503 exits non-zero and the run is recorded as failed instead of quietly
+succeeding.
+
+Backups: daily snapshot at 02:17 UTC, 10-day retention. `retentionTime` is in
+days for a daily schedule (maximum 60), not seconds.
+
 ### Railway
 
 Railway builds the `Dockerfile`, so `vercel.json` and `scripts/vercel-build.sh`
