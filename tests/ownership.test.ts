@@ -1,4 +1,4 @@
-import { beforeEach, afterAll, describe, expect, it } from 'vitest';
+import { beforeEach, afterAll, describe, expect, it, vi } from 'vitest';
 import { prisma } from '@/lib/prisma';
 import { createTestUser, resetDatabase } from './helpers';
 import {
@@ -185,5 +185,37 @@ describe('approval state machine', () => {
     expect(logs.every((l) => l.actor === null || l.actor === user.email)).toBe(
       true,
     );
+  });
+});
+
+describe('admin gate', () => {
+  const ORIGINAL = process.env.ADMIN_EMAILS;
+  afterAll(() => {
+    if (ORIGINAL === undefined) delete process.env.ADMIN_EMAILS;
+    else process.env.ADMIN_EMAILS = ORIGINAL;
+  });
+
+  it('denies everyone when ADMIN_EMAILS is unset', async () => {
+    delete process.env.ADMIN_EMAILS;
+    vi.resetModules();
+    const { isAdminEmail } = await import('@/lib/auth/admin');
+    expect(isAdminEmail('owner@example.test')).toBe(false);
+  });
+
+  it('admits only listed addresses, case-insensitively', async () => {
+    process.env.ADMIN_EMAILS = ' Owner@Example.test , second@example.test ';
+    vi.resetModules();
+    const { isAdminEmail } = await import('@/lib/auth/admin');
+    expect(isAdminEmail('owner@example.test')).toBe(true);
+    expect(isAdminEmail('SECOND@example.test')).toBe(true);
+    expect(isAdminEmail('someone@example.test')).toBe(false);
+  });
+
+  it('does not admit on a partial or substring match', async () => {
+    process.env.ADMIN_EMAILS = 'owner@example.test';
+    vi.resetModules();
+    const { isAdminEmail } = await import('@/lib/auth/admin');
+    expect(isAdminEmail('owner@example.test.evil.com')).toBe(false);
+    expect(isAdminEmail('not-owner@example.test')).toBe(false);
   });
 });

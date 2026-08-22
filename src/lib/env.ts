@@ -46,6 +46,18 @@ const envSchema = z.object({
    */
   GOOGLE_PLACES_API_KEY: z.string().min(1).optional(),
 
+  /**
+   * Comma-separated emails allowed into /admin.
+   *
+   * Deliberately an environment variable rather than a column on User. A role
+   * column needs a way to promote the first admin, and every mechanism for that
+   * is either a migration that hardcodes an address or an endpoint that can
+   * grant privilege — a new escalation surface on a product that has exactly
+   * one owner. An env var has neither problem: it is set where the other
+   * secrets live and cannot be changed through the application at all.
+   */
+  ADMIN_EMAILS: z.string().min(1).optional(),
+
   // --- Billing -------------------------------------------------------------
   // PAYPAL_CLIENT_SECRET must never reach the browser. It is read only in
   // src/lib/billing/providers/paypal.ts, which is server-only.

@@ -3,6 +3,7 @@ import { Sidebar } from '@/components/layout/sidebar';
 import { Header } from '@/components/layout/header';
 import { MobileNav } from '@/components/layout/mobile-nav';
 import { getSession } from '@/lib/auth/session';
+import { isAdminEmail } from '@/lib/auth/admin';
 import { prisma } from '@/lib/prisma';
 
 /**
@@ -32,7 +33,7 @@ export default async function DashboardLayout({
 
   return (
     <div className="min-h-screen bg-gray-950">
-      <Sidebar />
+      <Sidebar isAdmin={isAdminEmail(session.email)} />
       <div className="lg:pl-64">
         <Header />
         <main className="p-4 lg:p-8 pb-20 lg:pb-8">{children}</main>

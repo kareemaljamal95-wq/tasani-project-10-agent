@@ -22,7 +22,7 @@ const navItems = [
   { href: '/billing', icon: CreditCard, label: 'Billing' },
 ];
 
-export function Sidebar() {
+export function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
 
@@ -49,7 +49,10 @@ export function Sidebar() {
         </button>
       </div>
       <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-        {navItems.map((item) => {
+        {(isAdmin
+          ? [...navItems, { href: '/admin', icon: ShieldCheck, label: 'Admin' }]
+          : navItems
+        ).map((item) => {
           const Icon = item.icon;
           const active = pathname === item.href;
           return (
