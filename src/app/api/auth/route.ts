@@ -14,7 +14,7 @@ import {
   clientIp,
   handleRouteError,
   parseBody,
-  rateLimit,
+  rateLimitShared,
 } from '@/lib/api/guard';
 import { recordAudit } from '@/lib/audit';
 import { track } from '@/lib/analytics';
@@ -40,7 +40,12 @@ export async function POST(req: Request) {
   try {
     // Auth endpoints get a tighter budget than the rest of the API: this is
     // the surface a credential-stuffing run would target.
-    rateLimit(`auth:${clientIp(req)}`, env().AUTH_RATE_LIMIT_MAX);
+    // Postgres-backed, not the in-process counter: this is the
+    // credential-stuffing surface, so the budget has to hold across replicas
+    // and survive a restart. Every other sensitive route already used the
+    // shared limiter; auth was the one that slipped through on the local one,
+    // where an attacker regains a full budget whenever the process recycles.
+    await rateLimitShared(`auth:${clientIp(req)}`, env().AUTH_RATE_LIMIT_MAX);
 
     const body = await parseBody(req, credentialsSchema);
 
