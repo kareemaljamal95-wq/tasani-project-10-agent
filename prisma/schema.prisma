@@ -361,7 +361,18 @@ model Lead {
 
   status LeadStatus @default(NEW)
 
-  /// 0-100. Set by the lead-scoring agent or by hand.
+  /// What the source published about the business, where it published it.
+  ///
+  /// Structured rather than folded into `notes` because these are scoring
+  /// inputs: a rating held only inside a prose blob cannot be read back, so
+  /// the score would be frozen at import instead of recomputable. Null means
+  /// the source published nothing — never "zero stars".
+  rating      Float?
+  ratingCount Int?
+
+  /// 0-100 opportunity score, derived from the signals above by
+  /// `scoreLead` in src/lib/lead-scoring.ts. Recomputed whenever a scoring
+  /// input changes; the A/B/C grade is derived from it and not stored.
   score Int @default(0)
 
   /// Agent type currently responsible, e.g. "SALES".

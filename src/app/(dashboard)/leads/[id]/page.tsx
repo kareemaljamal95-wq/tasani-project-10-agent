@@ -43,6 +43,8 @@ export default async function LeadPage({
           notes: lead.notes,
           status: lead.status,
           score: lead.score,
+          rating: lead.rating,
+          ratingCount: lead.ratingCount,
           assignedAgent: lead.assignedAgent,
           createdAt: lead.createdAt.toISOString(),
           lastContactedAt: lead.lastContactedAt?.toISOString() ?? null,

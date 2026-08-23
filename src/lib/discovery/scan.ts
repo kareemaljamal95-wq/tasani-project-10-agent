@@ -69,6 +69,10 @@ function toLeadInput(
     companyName: business.name,
     phone: business.phone,
     website: business.website,
+    // Also kept structured, not only in `notes`: these are scoring inputs, and
+    // a rating readable solely as prose cannot be recomputed against later.
+    rating: business.rating,
+    ratingCount: business.ratingCount,
     notes: notes || undefined,
     source: `discovery:${source}`,
     externalSource: source,

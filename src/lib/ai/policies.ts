@@ -43,6 +43,7 @@ const MICRO_BUDGET_USD: Record<string, number> = {
   // blocked outright, so a new type must be added here to work at all.
   DISCOVERY: 50,
   ANALYST: 50,
+  STRATEGIST: 50,
 };
 
 /**

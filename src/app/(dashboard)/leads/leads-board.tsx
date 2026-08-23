@@ -6,6 +6,8 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Plus } from 'lucide-react';
+import { GradeBadge, GRADE_LABEL } from '@/components/leads/grade-badge';
+import { gradeFor, type LeadGrade } from '@/lib/lead-scoring';
 
 export interface LeadRow {
   id: string;
@@ -48,6 +50,19 @@ export function LeadsBoard({
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [gradeFilter, setGradeFilter] = useState<LeadGrade | null>(null);
+
+  // Filtered client-side: the grade is a pure function of a score already on
+  // every row, so a round trip would fetch data the page is holding.
+  const visible = gradeFilter
+    ? leads.filter((lead) => gradeFor(lead.score) === gradeFilter)
+    : leads;
+
+  const gradeCounts = leads.reduce<Record<string, number>>((acc, lead) => {
+    const g = gradeFor(lead.score);
+    acc[g] = (acc[g] ?? 0) + 1;
+    return acc;
+  }, {});
 
   async function create(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -127,6 +142,36 @@ export function LeadsBoard({
         ))}
       </div>
 
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs text-white/40">تصفية حسب الفرصة:</span>
+        {(['A', 'B', 'C'] as LeadGrade[]).map((grade) => (
+          <button
+            key={grade}
+            type="button"
+            onClick={() =>
+              setGradeFilter((current) => (current === grade ? null : grade))
+            }
+            aria-pressed={gradeFilter === grade}
+            className={`rounded-full border px-3 py-1 text-xs transition-colors ${
+              gradeFilter === grade
+                ? 'bg-white/20 text-white border-white/40'
+                : 'bg-white/5 text-white/50 border-white/15 hover:text-white/80'
+            }`}
+          >
+            {grade} · {GRADE_LABEL[grade]} · {gradeCounts[grade] ?? 0}
+          </button>
+        ))}
+        {gradeFilter && (
+          <button
+            type="button"
+            onClick={() => setGradeFilter(null)}
+            className="text-xs text-white/40 underline hover:text-white/70"
+          >
+            إلغاء التصفية
+          </button>
+        )}
+      </div>
+
       {adding && (
         <form
           onSubmit={create}
@@ -157,9 +202,15 @@ export function LeadsBoard({
             أضف أول عميل، ثم شغّل عليه وكيل المبيعات — سيصلك المقترح للاعتماد.
           </p>
         </div>
+      ) : visible.length === 0 ? (
+        <div className="rounded-2xl border border-white/10 bg-white/5 p-10 text-center">
+          <p className="text-white/60">
+            لا يوجد عميل بهذه الدرجة ضمن المعروض.
+          </p>
+        </div>
       ) : (
         <ul className="space-y-2">
-          {leads.map((lead) => (
+          {visible.map((lead) => (
             <li key={lead.id}>
               <Link
                 href={`/leads/${lead.id}`}
@@ -176,6 +227,7 @@ export function LeadsBoard({
                 </div>
 
                 <div className="flex items-center gap-3 shrink-0">
+                  <GradeBadge score={lead.score} />
                   <span className="text-xs text-white/40">
                     {lead.assignedAgent ?? '—'}
                   </span>

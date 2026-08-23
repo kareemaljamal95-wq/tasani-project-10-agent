@@ -2,6 +2,7 @@ import { LeadStatus, type Lead, Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { recordActivity } from '@/lib/activity';
 import { track } from '@/lib/analytics';
+import { scoreLead, affectsScore } from '@/lib/lead-scoring';
 
 /**
  * Lead service.
@@ -36,13 +37,22 @@ export interface CreateLeadInput {
   source?: string;
   notes?: string;
   assignedAgent?: string;
+  /** Overrides the derived score. Omit to let `scoreLead` decide. */
   score?: number;
+  /** As the source published them; used to score the opportunity. */
+  rating?: number;
+  ratingCount?: number;
   /** Set by an importer, e.g. 'google_places' and that source's own id. */
   externalSource?: string;
   externalId?: string;
 }
 
 export async function createLead(input: CreateLeadInput): Promise<Lead> {
+  // Scored on the way in so the list is orderable without a second pass, and
+  // so a lead is never shown with a placeholder 0 that reads as "worthless"
+  // when it simply has not been looked at.
+  const derived = scoreLead(input);
+
   try {
     const lead = await prisma.lead.create({
       data: {
@@ -55,7 +65,9 @@ export async function createLead(input: CreateLeadInput): Promise<Lead> {
         source: input.source ?? 'manual',
         notes: input.notes ?? null,
         assignedAgent: input.assignedAgent ?? 'SALES',
-        score: input.score ?? 0,
+        rating: input.rating ?? null,
+        ratingCount: input.ratingCount ?? null,
+        score: input.score ?? derived.score,
         externalSource: input.externalSource ?? null,
         externalId: input.externalId ?? null,
       },
@@ -117,6 +129,8 @@ export interface UpdateLeadInput {
   notes?: string | null;
   status?: LeadStatus;
   score?: number;
+  rating?: number | null;
+  ratingCount?: number | null;
   assignedAgent?: string | null;
 }
 
@@ -128,9 +142,17 @@ export async function updateLead(
 ): Promise<Lead> {
   const current = await getLead(id, userId);
 
+  // Rescore when an edit touches a scoring input, so a lead that gains a
+  // website stops being reported as the opportunity it no longer is. An
+  // explicit score in the payload is the operator's own judgement and wins.
+  const rescored =
+    updates.score === undefined && affectsScore(updates)
+      ? { score: scoreLead({ ...current, ...updates }).score }
+      : {};
+
   const result = await prisma.lead.updateMany({
     where: { id, userId },
-    data: updates,
+    data: { ...updates, ...rescored },
   });
 
   if (result.count === 0) throw new LeadNotFoundError();

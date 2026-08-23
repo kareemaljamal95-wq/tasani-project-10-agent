@@ -6,6 +6,8 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Play, ShieldCheck, Ban } from 'lucide-react';
+import { GradeBadge } from '@/components/leads/grade-badge';
+import { scoreLead } from '@/lib/lead-scoring';
 
 const STATUSES = [
   'NEW',
@@ -25,7 +27,10 @@ const STATUS_LABEL: Record<string, string> = {
   LOST: 'مفقود',
 };
 
-const AGENTS = ['SALES', 'MARKETING', 'CONTENT', 'RESEARCH', 'CEO'];
+// Kept local rather than imported from AGENT_DEFAULTS: this is a client
+// component, and importing the defaults would ship every system prompt to the
+// browser. Only the types that act on a single lead belong here.
+const AGENTS = ['SALES', 'STRATEGIST', 'MARKETING', 'CONTENT', 'RESEARCH', 'CEO'];
 
 interface LeadView {
   id: string;
@@ -37,6 +42,8 @@ interface LeadView {
   notes: string | null;
   status: string;
   score: number;
+  rating: number | null;
+  ratingCount: number | null;
   assignedAgent: string | null;
   createdAt: string;
   lastContactedAt: string | null;
@@ -70,6 +77,12 @@ export function LeadDetail({
   const [outcome, setOutcome] = useState<
     { kind: 'blocked' | 'approval' | 'autonomous'; text: string } | null
   >(null);
+
+  // Recomputed here rather than stored, so the reasons shown are always the
+  // ones that produced the number beside them. `scoreLead` is pure, so this
+  // costs nothing and cannot drift from what the server computed.
+  const scoring = scoreLead(lead);
+  const overridden = scoring.score !== lead.score;
 
   async function patch(updates: Record<string, unknown>) {
     setBusy(true);
@@ -288,11 +301,38 @@ export function LeadDetail({
 
         <aside className="space-y-6">
           <section className="rounded-2xl border border-white/10 bg-white/5 p-5 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-white/70">
+                لماذا هذه الدرجة
+              </h2>
+              <GradeBadge score={lead.score} />
+            </div>
+
+            <ul className="space-y-1.5 text-sm text-white/70">
+              {scoring.reasons.map((reason) => (
+                <li key={reason} className="flex gap-2">
+                  <span className="text-white/25">•</span>
+                  <span>{reason}</span>
+                </li>
+              ))}
+            </ul>
+
+            {overridden && (
+              <p className="text-xs text-amber-200/80 border-t border-white/10 pt-2">
+                الدرجة المحفوظة {lead.score} عُدِّلت يدويًا؛ الحساب من الإشارات
+                أعلاه يعطي {scoring.score}.
+              </p>
+            )}
+          </section>
+
+          <section className="rounded-2xl border border-white/10 bg-white/5 p-5 space-y-3">
             <h2 className="text-sm font-semibold text-white/70">التفاصيل</h2>
             <dl className="space-y-2 text-sm">
               <div className="flex justify-between gap-2">
-                <dt className="text-white/40">الدرجة</dt>
-                <dd className="text-white/85">{lead.score}</dd>
+                <dt className="text-white/40">الفرصة</dt>
+                <dd>
+                  <GradeBadge score={lead.score} />
+                </dd>
               </div>
               <div className="flex justify-between gap-2">
                 <dt className="text-white/40">آخر تواصل</dt>

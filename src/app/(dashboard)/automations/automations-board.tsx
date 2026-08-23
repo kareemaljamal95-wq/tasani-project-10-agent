@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Plus, Play, Trash2, Pencil } from 'lucide-react';
+import { WorkflowCanvas } from './workflow-canvas';
 
 export interface TriggerRow {
   id: string;
@@ -401,6 +402,15 @@ export function AutomationsBoard({
                 <p className="text-xs text-white/50 line-clamp-2">
                   {t.objectiveTemplate}
                 </p>
+
+                <WorkflowCanvas
+                  trigger={t}
+                  leadStatusLabel={LEAD_STATUS}
+                  onEdit={() => {
+                    setAdding(false);
+                    setEditing(t);
+                  }}
+                />
 
                 {last.length > 0 && (
                   <div className="flex flex-wrap gap-2 pt-1 border-t border-white/5">
