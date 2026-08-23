@@ -351,6 +351,56 @@ export class PayPalProvider implements BillingProvider {
     };
   }
 
+  /**
+   * Captures an approved order.
+   *
+   * An order created with intent CAPTURE does not settle when the buyer
+   * approves it — PayPal leaves it APPROVED and waits for this call. Without
+   * it no money moves and no PAYMENT.CAPTURE.COMPLETED is ever emitted, so a
+   * subscription that depends on that event never activates. This was missing,
+   * and the whole payment path was silently inert because of it.
+   *
+   * The order id is the idempotency key: PayPal deduplicates on
+   * PayPal-Request-Id, so a webhook redelivery cannot charge twice.
+   *
+   * 422 ORDER_ALREADY_CAPTURED is success, not failure — it means an earlier
+   * attempt got through and the capture event is already on its way.
+   */
+  async captureOrder(providerOrderId: string): Promise<void> {
+    const response = await this.request(
+      `/v2/checkout/orders/${encodeURIComponent(providerOrderId)}/capture`,
+      {
+        method: 'POST',
+        idempotencyKey: `capture-${providerOrderId}`,
+        body: JSON.stringify({}),
+      },
+    );
+
+    if (response.ok) return;
+
+    const detail = await response.text().catch(() => '');
+
+    if (
+      response.status === 422 &&
+      detail.includes('ORDER_ALREADY_CAPTURED')
+    ) {
+      logger.info('PayPal order already captured', { providerOrderId });
+      return;
+    }
+
+    // The body can name the payer's reason for decline, so only the status is
+    // recorded; the detail stays in the thrown message for the caller's log.
+    logger.error('PayPal order capture failed', {
+      providerOrderId,
+      status: response.status,
+    });
+
+    throw new ProviderCapabilityError(
+      'restApi',
+      `PayPal could not capture the order (HTTP ${response.status}).`,
+    );
+  }
+
   async cancelSubscription(
     providerSubscriptionId: string,
     reason: string,

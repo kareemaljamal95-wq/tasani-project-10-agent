@@ -43,6 +43,17 @@ const EVENT_STATUS: Record<string, SubscriptionStatus> = {
   'PAYMENT.CAPTURE.REVERSED': SubscriptionStatus.SUSPENDED,
 };
 
+/**
+ * The buyer approved an order. Not a state change — an instruction to collect.
+ *
+ * Kept out of EVENT_STATUS on purpose: approval is not payment, and mapping it
+ * to ACTIVE would grant access to anyone who reached the PayPal page and
+ * pressed a button. Capturing here is what produces the
+ * PAYMENT.CAPTURE.COMPLETED that legitimately activates the subscription, so
+ * the money still leads the access.
+ */
+const CAPTURE_ON = 'CHECKOUT.ORDER.APPROVED';
+
 export async function processWebhook(
   rawBody: string,
   headers: Record<string, string>,
@@ -80,6 +91,36 @@ export async function processWebhook(
       return { status: 'duplicate', eventId };
     }
     throw error;
+  }
+
+  // Ordered before the status mapping because this event carries no status.
+  // It runs after the idempotency claim above, so a redelivered approval
+  // cannot reach the capture call a second time — PayPal's own
+  // PayPal-Request-Id deduplication is the second line, not the first.
+  if (eventType === CAPTURE_ON) {
+    const orderId = verified.metadata.resourceId;
+
+    if (typeof orderId !== 'string' || !provider.captureOrder) {
+      await markEvent(eventId, 'ignored', 'no order to capture');
+      return { status: 'ignored', eventId, reason: 'No order to capture.' };
+    }
+
+    try {
+      await provider.captureOrder(orderId);
+    } catch (error) {
+      // Left unprocessed and rethrown so the route answers 500 and the
+      // provider retries. Failing quietly here would strand a buyer who has
+      // paid nothing but believes they have.
+      await markEvent(
+        eventId,
+        'failed',
+        error instanceof Error ? error.message : String(error),
+      );
+      throw error;
+    }
+
+    await markEvent(eventId, 'processed', null);
+    return { status: 'processed', eventId, eventType };
   }
 
   const targetStatus = eventType ? EVENT_STATUS[eventType] : undefined;
@@ -136,7 +177,9 @@ export async function processWebhook(
 async function markEvent(
   eventId: string,
   status: string,
-  reason: string,
+  // Null for an event that succeeded: the error column should be empty, not
+  // carry a sentence explaining that nothing went wrong.
+  reason: string | null,
 ): Promise<void> {
   const provider = getProvider();
 

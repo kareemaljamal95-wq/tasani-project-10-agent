@@ -53,6 +53,8 @@ let verifyResult: VerifiedWebhook = {
 };
 
 let createdOrders = 0;
+let capturedOrders: string[] = [];
+let captureFails = false;
 
 const stubProvider: BillingProvider = {
   name: 'paypal',
@@ -75,6 +77,10 @@ const stubProvider: BillingProvider = {
   async verifyWebhook() {
     return verifyResult;
   },
+  async captureOrder(providerOrderId) {
+    if (captureFails) throw new Error('capture declined');
+    capturedOrders.push(providerOrderId);
+  },
   async cancelSubscription() {},
 };
 
@@ -84,6 +90,8 @@ beforeEach(async () => {
   setProviderKey();
   __setProvider(stubProvider);
   createdOrders = 0;
+  capturedOrders = [];
+  captureFails = false;
   verifyResult = {
     verified: true,
     eventId: 'evt-1',
@@ -480,6 +488,73 @@ describe('webhooks', () => {
     const event = await prisma.billingEvent.findFirstOrThrow();
     expect(event.payloadHash).toMatch(/^[a-f0-9]{64}$/);
     expect(JSON.stringify(event.metadata)).not.toContain('buyer@example.test');
+  });
+
+  it('captures an approved order instead of activating on approval', async () => {
+    // Approval is a button press, not a payment. It must collect the money and
+    // leave activation to the capture event that follows.
+    const user = await createTestUser();
+    const subscription = await giveSubscription(
+      user.id,
+      'growth',
+      SubscriptionStatus.TRIALING,
+    );
+
+    verifyResult = {
+      verified: true,
+      eventId: 'evt-approved',
+      eventType: 'CHECKOUT.ORDER.APPROVED',
+      providerSubscriptionId: null,
+      metadata: { resourceId: 'ORDER-42' },
+    };
+
+    const outcome = await processWebhook('{"id":"evt-approved"}', {});
+
+    expect(outcome.status).toBe('processed');
+    expect(capturedOrders).toEqual(['ORDER-42']);
+
+    const after = await prisma.subscription.findUniqueOrThrow({
+      where: { id: subscription.id },
+    });
+    expect(after.status).toBe(SubscriptionStatus.TRIALING);
+  });
+
+  it('captures once when the same approval is redelivered', async () => {
+    await createTestUser();
+
+    verifyResult = {
+      verified: true,
+      eventId: 'evt-approved',
+      eventType: 'CHECKOUT.ORDER.APPROVED',
+      providerSubscriptionId: null,
+      metadata: { resourceId: 'ORDER-42' },
+    };
+
+    await processWebhook('{"id":"evt-approved"}', {});
+    const second = await processWebhook('{"id":"evt-approved"}', {});
+
+    expect(second.status).toBe('duplicate');
+    expect(capturedOrders).toEqual(['ORDER-42']);
+  });
+
+  it('surfaces a failed capture so the provider retries', async () => {
+    await createTestUser();
+    captureFails = true;
+
+    verifyResult = {
+      verified: true,
+      eventId: 'evt-approved',
+      eventType: 'CHECKOUT.ORDER.APPROVED',
+      providerSubscriptionId: null,
+      metadata: { resourceId: 'ORDER-42' },
+    };
+
+    // Rethrown rather than swallowed: the route answers 500, PayPal retries,
+    // and a buyer is never left believing they paid when nothing was taken.
+    await expect(processWebhook('{"id":"evt-approved"}', {})).rejects.toThrow();
+
+    const event = await prisma.billingEvent.findFirstOrThrow();
+    expect(event.status).toBe('failed');
   });
 });
 

@@ -63,6 +63,17 @@ export interface BillingProvider {
     headers: Record<string, string>,
   ): Promise<VerifiedWebhook>;
 
+  /**
+   * Takes the money for an order the buyer has approved.
+   *
+   * Separate from `createCheckout` because approval and capture are two
+   * distinct events at the provider: a buyer pressing "Pay Now" leaves the
+   * order APPROVED, and nothing moves until this is called. Optional on the
+   * interface — a provider whose checkout settles on approval has nothing to
+   * do here.
+   */
+  captureOrder?(providerOrderId: string): Promise<void>;
+
   cancelSubscription(providerSubscriptionId: string, reason: string): Promise<void>;
 }
 
