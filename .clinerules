@@ -1,0 +1,69 @@
+# Cline rules for TASAMI
+
+Read `CLAUDE.md` first — it is the full working brief. This file is the short
+version an agent must not violate, plus the things that have actually broken
+this repo before.
+
+## Before you change anything
+
+- `npm run typecheck` and `npm run build` are the quality gates. There is **no
+  lint script**, and you must not add one: the repo has no eslint config and
+  Next 16 removed `next lint`.
+- `npm test` needs a real PostgreSQL database and truncates tables between
+  cases. Point `DATABASE_URL` at a scratch database, **never** a working one.
+
+## Never do these
+
+- **Never bypass the approval gate.** An agent may only ever create a `PENDING`
+  approval. `dispatchApproval` is the sole path to `SENT` and requires an
+  already-`APPROVED` row. A failure must never produce a false `SENT`.
+- **Never invent data.** No fabricated dashboard figures, no guessed contact
+  details for a real business, no fixture standing in for a live integration. A
+  page with no data source says so; a missing credential fails closed with 503.
+- **Never write a secret into the repo.** No `.env`, no keys in code, comments,
+  commits or logs. Configuration is server-side only.
+- **Never delete `prisma/migrations/`.** With an empty migrations directory
+  `prisma migrate deploy` prints "No migration found" and exits 0 — a green
+  deploy against an unmigrated database.
+- **Never upgrade Prisma past 6.x** on an incidental change. Prisma 7 drops
+  `datasource.url` from schema.prisma for a driver adapter; that is its own
+  branch.
+
+## Traps that have cost real time here
+
+- **`??` on an environment variable is a bug.** It falls back only on
+  `null`/`undefined`, so a blank value in a hosting dashboard passes straight
+  through — this took down a production build via `new URL('')`. Use `||` when
+  reading `process.env` directly.
+- **Every query is scoped by `userId`.** `updateMany`/`deleteMany` with
+  `{ id, userId }`, `findFirst` rather than `findUnique`. A guessed id must read
+  as not-found. This repo has had real IDOR bugs.
+- **`updateMany` with empty data counts 0**, which reads as not-found even when
+  the row exists and is owned. Check ownership explicitly when a PATCH body may
+  be empty.
+- **A new agent type needs an entry in `MICRO_BUDGET_USD`**
+  (`src/lib/ai/policies.ts`). Without one, `evaluatePolicy` blocks it as
+  "Unknown agent" — provisioned, listed in the UI, and dead on click.
+- **Money is integer minor units.** The client sends a plan code and an interval
+  and nothing else. No feature code branches on a plan code —
+  `src/lib/billing/entitlements.ts` is the single authority.
+- **Northflank secret PATCH replaces `secrets.variables`, it does not merge.**
+  Sending one key wipes the rest. Read the whole group, merge, send it whole,
+  then verify the count did not drop. Five secrets were lost here this way.
+
+## Style
+
+Comments explain *why*, especially where the code looks odd — the ordering
+constraints, the atomic statements, the deliberate refusals. Do not add comments
+that restate the line beneath them.
+
+Tests assert against real database behaviour. External services are substituted
+at the network boundary (`__setProvider`, `__setDiscoveryProvider`), never by
+mocking the logic under test. Derive expectations from source data
+(`AGENT_DEFAULTS.length`) rather than hardcoding counts.
+
+## Ask before
+
+Changing billing, pricing, the PayPal integration, the database schema, or
+`PAYPAL_ENVIRONMENT`. These carry money or migration risk and are the owner's
+call.
