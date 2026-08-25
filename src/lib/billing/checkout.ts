@@ -5,6 +5,8 @@ import { env } from '@/lib/env';
 import { findCatalogPlan } from './catalog';
 import { evaluateOffer } from './offers';
 import { getProvider } from './index';
+import { activateFromCheckout } from './subscription';
+import { grantsAccess } from './entitlements';
 
 /**
  * Checkout orchestration.
@@ -174,4 +176,72 @@ export async function getOwnedCheckout(
   return prisma.checkoutSession.findFirst({
     where: { id: checkoutId, userId },
   });
+}
+
+/**
+ * Settles a checkout by asking the provider what actually happened.
+ *
+ * The webhook remains the normal path, but it is not a guarantee: delivery can
+ * be delayed, misrouted, or silently unconfigured, and a customer who has paid
+ * must not be left without access because of our plumbing. This asks PayPal
+ * directly and acts on its answer.
+ *
+ * It does not weaken the rule that the browser cannot grant itself access. The
+ * caller's session only decides *which* checkout may be examined; whether money
+ * moved is answered by an authenticated call to the provider, which no browser
+ * can forge. A checkout the caller does not own reads as not-found.
+ *
+ * Safe to call repeatedly: capture is idempotent at the provider, and a second
+ * activation loses on the (provider, providerSubscriptionId) constraint.
+ */
+export type ReconcileOutcome =
+  | 'activated'
+  | 'already-active'
+  | 'pending'
+  | 'not-found';
+
+export async function reconcileCheckout(
+  checkoutId: string,
+  userId: string,
+): Promise<ReconcileOutcome> {
+  const checkout = await getOwnedCheckout(checkoutId, userId);
+  if (!checkout?.providerOrderId) return 'not-found';
+
+  const provider = getProvider();
+  if (!provider.getOrder) return 'pending';
+
+  const existing = await prisma.subscription.findFirst({
+    where: { userId, provider: provider.name },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  if (existing && grantsAccess(existing)) return 'already-active';
+
+  const order = await provider.getOrder(checkout.providerOrderId);
+  if (!order) return 'not-found';
+
+  // The buyer approved but nothing collected yet — the same gap the webhook
+  // closes. Capture here so a missing webhook cannot strand a paid customer.
+  if (order.status === 'APPROVED' && provider.captureOrder) {
+    await provider.captureOrder(checkout.providerOrderId);
+  } else if (order.status !== 'COMPLETED') {
+    // PAYER_ACTION_REQUIRED, VOIDED, CREATED: no money has moved, so no access.
+    return 'pending';
+  }
+
+  const subscription = await activateFromCheckout(
+    userId,
+    provider.name,
+    checkout.providerOrderId,
+  );
+
+  if (!subscription) return 'pending';
+
+  logger.info('Checkout reconciled without a webhook', {
+    checkoutId,
+    userId,
+    subscriptionId: subscription.id,
+  });
+
+  return 'activated';
 }

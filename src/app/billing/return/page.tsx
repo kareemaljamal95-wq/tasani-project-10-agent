@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { getSession } from '@/lib/auth/session';
 import { getOwnedCheckout } from '@/lib/billing/checkout';
 import { getEntitlements } from '@/lib/billing/entitlements';
+import { Reconcile } from './reconcile';
 
 export const dynamic = 'force-dynamic';
 
@@ -57,9 +58,14 @@ export default async function BillingReturnPage({
               إلا بعد تأكيده — عادةً خلال ثوانٍ. حدّث الصفحة بعد قليل.
             </p>
             {checkoutSession && (
-              <p className="text-xs text-white/30 font-mono">
-                مرجع الطلب: {checkoutSession.id}
-              </p>
+              <>
+                {/* Asks the provider directly, so a missing or delayed webhook
+                    cannot strand a customer who has actually paid. */}
+                <Reconcile checkoutId={checkoutSession.id} />
+                <p className="text-xs text-white/30 font-mono">
+                  مرجع الطلب: {checkoutSession.id}
+                </p>
+              </>
             )}
             <Link href="/billing" className="inline-block text-sm text-violet-300">
               حالة الاشتراك ←

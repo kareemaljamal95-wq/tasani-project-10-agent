@@ -74,6 +74,15 @@ export interface BillingProvider {
    */
   captureOrder?(providerOrderId: string): Promise<void>;
 
+  /**
+   * Reads an order's current state straight from the provider.
+   *
+   * The provider is the source of truth for whether money moved, and this asks
+   * it directly rather than waiting to be told. It is what lets a payment be
+   * reconciled when a webhook is delayed, misrouted or never configured.
+   */
+  getOrder?(providerOrderId: string): Promise<{ status: string } | null>;
+
   cancelSubscription(providerSubscriptionId: string, reason: string): Promise<void>;
 }
 

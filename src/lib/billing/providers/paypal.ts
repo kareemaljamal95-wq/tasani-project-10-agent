@@ -412,6 +412,24 @@ export class PayPalProvider implements BillingProvider {
     );
   }
 
+  async getOrder(providerOrderId: string): Promise<{ status: string } | null> {
+    const response = await this.request(
+      `/v2/checkout/orders/${encodeURIComponent(providerOrderId)}`,
+    );
+
+    if (response.status === 404) return null;
+
+    if (!response.ok) {
+      throw new ProviderCapabilityError(
+        'restApi',
+        `PayPal could not read the order (HTTP ${response.status}).`,
+      );
+    }
+
+    const data = (await response.json()) as { status?: string };
+    return { status: data.status ?? 'UNKNOWN' };
+  }
+
   async cancelSubscription(
     providerSubscriptionId: string,
     reason: string,

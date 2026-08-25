@@ -13,7 +13,11 @@ import {
   PLAN_CATALOG,
   FOUNDING_OFFER,
 } from '@/lib/billing/catalog';
-import { startCheckout, CheckoutError } from '@/lib/billing/checkout';
+import {
+  startCheckout,
+  CheckoutError,
+  reconcileCheckout,
+} from '@/lib/billing/checkout';
 import {
   evaluateOffer,
   redeemOffer,
@@ -54,6 +58,7 @@ let verifyResult: VerifiedWebhook = {
 
 let createdOrders = 0;
 let capturedOrders: string[] = [];
+let orderStatus = 'COMPLETED';
 let captureFails = false;
 
 const stubProvider: BillingProvider = {
@@ -77,6 +82,9 @@ const stubProvider: BillingProvider = {
   async verifyWebhook() {
     return verifyResult;
   },
+  async getOrder() {
+    return { status: orderStatus };
+  },
   async captureOrder(providerOrderId) {
     if (captureFails) throw new Error('capture declined');
     capturedOrders.push(providerOrderId);
@@ -92,6 +100,7 @@ beforeEach(async () => {
   createdOrders = 0;
   capturedOrders = [];
   captureFails = false;
+  orderStatus = 'COMPLETED';
   verifyResult = {
     verified: true,
     eventId: 'evt-1',
@@ -581,6 +590,97 @@ describe('webhooks', () => {
       where: { id: checkout.checkoutId },
     });
     expect(closed.status).toBe('COMPLETED');
+  });
+
+  it('reconciles a paid checkout when no webhook ever arrives', async () => {
+    // The webhook is the normal path, not a guarantee. A customer who paid
+    // must not lose access to our plumbing.
+    const user = await createTestUser();
+
+    const checkout = await startCheckout({
+      userId: user.id,
+      planCode: 'growth',
+      interval: 'MONTH',
+      idempotencyKey: 'reconcile-1',
+    });
+
+    orderStatus = 'COMPLETED';
+    const outcome = await reconcileCheckout(checkout.checkoutId, user.id);
+
+    expect(outcome).toBe('activated');
+
+    const created = await prisma.subscription.findFirstOrThrow({
+      where: { userId: user.id },
+    });
+    expect(created.status).toBe(SubscriptionStatus.ACTIVE);
+    expect(await getEntitlements(user.id)).toMatchObject({ active: true });
+  });
+
+  it('captures first when the buyer approved but nothing collected', async () => {
+    const user = await createTestUser();
+    const checkout = await startCheckout({
+      userId: user.id,
+      planCode: 'growth',
+      interval: 'MONTH',
+      idempotencyKey: 'reconcile-2',
+    });
+
+    orderStatus = 'APPROVED';
+    expect(await reconcileCheckout(checkout.checkoutId, user.id)).toBe('activated');
+    expect(capturedOrders).toHaveLength(1);
+  });
+
+  it('grants nothing when the buyer never paid', async () => {
+    const user = await createTestUser();
+    const checkout = await startCheckout({
+      userId: user.id,
+      planCode: 'growth',
+      interval: 'MONTH',
+      idempotencyKey: 'reconcile-3',
+    });
+
+    orderStatus = 'PAYER_ACTION_REQUIRED';
+
+    expect(await reconcileCheckout(checkout.checkoutId, user.id)).toBe('pending');
+    expect(await prisma.subscription.count({ where: { userId: user.id } })).toBe(0);
+    expect(capturedOrders).toHaveLength(0);
+  });
+
+  it('will not reconcile another account\'s checkout', async () => {
+    const owner = await createTestUser();
+    const stranger = await createTestUser();
+
+    const checkout = await startCheckout({
+      userId: owner.id,
+      planCode: 'growth',
+      interval: 'MONTH',
+      idempotencyKey: 'reconcile-4',
+    });
+
+    orderStatus = 'COMPLETED';
+
+    // A guessed id must read as not-found, never as someone else's payment.
+    expect(await reconcileCheckout(checkout.checkoutId, stranger.id)).toBe(
+      'not-found',
+    );
+    expect(await prisma.subscription.count({ where: { userId: stranger.id } })).toBe(0);
+  });
+
+  it('is safe to call twice', async () => {
+    const user = await createTestUser();
+    const checkout = await startCheckout({
+      userId: user.id,
+      planCode: 'growth',
+      interval: 'MONTH',
+      idempotencyKey: 'reconcile-5',
+    });
+
+    orderStatus = 'COMPLETED';
+    expect(await reconcileCheckout(checkout.checkoutId, user.id)).toBe('activated');
+    expect(await reconcileCheckout(checkout.checkoutId, user.id)).toBe(
+      'already-active',
+    );
+    expect(await prisma.subscription.count({ where: { userId: user.id } })).toBe(1);
   });
 
   it('does not provision a subscription from a refund', async () => {
