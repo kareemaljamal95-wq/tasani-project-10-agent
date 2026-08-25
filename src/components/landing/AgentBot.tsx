@@ -2,7 +2,7 @@
 
 import { useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { Float, Html } from '@react-three/drei';
+import { Float } from '@react-three/drei';
 import * as THREE from 'three';
 
 interface AgentBotProps {
@@ -76,17 +76,6 @@ export default function AgentBot({ position, color, label, index, total }: Agent
         </group>
       </Float>
 
-      {hovered && (
-        <Html position={[0, 0.8, 0]} center>
-          <div className="glass-panel px-4 py-2 text-center min-w-[120px]">
-            <p className="text-white text-sm font-semibold">{label}</p>
-            <p className="text-violet-400 text-xs mt-1">$29/mo</p>
-            <button className="mt-2 px-3 py-1 rounded-lg bg-gradient-to-r from-violet-600 to-purple-600 text-white text-xs font-medium hover:shadow-lg hover:shadow-violet-500/25 transition-all">
-              Select Agent
-            </button>
-          </div>
-        </Html>
-      )}
     </group>
   );
 }

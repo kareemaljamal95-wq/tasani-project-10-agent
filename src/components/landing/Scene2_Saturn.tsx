@@ -2,7 +2,7 @@
 
 import { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { Float, Text, Html } from '@react-three/drei';
+import { Float } from '@react-three/drei';
 import * as THREE from 'three';
 
 function SaturnRing({ innerRadius, outerRadius, color, opacity = 0.6 }: { innerRadius: number; outerRadius: number; color: string; opacity?: number }) {
@@ -105,21 +105,6 @@ export default function Scene2_Saturn() {
         <RingParticles />
       </Float>
 
-      <Text
-        position={[0, 3.5, 0]}
-        fontSize={0.5}
-        color="#ffffff"
-        anchorX="center"
-        anchorY="middle"
-      >
-        EXPLORE THE RINGS
-      </Text>
-
-      <Html position={[0, -4.5, 0]} center>
-        <div className="text-center pointer-events-none">
-          <p className="text-white/30 text-xs tracking-widest uppercase">Your AI agents await on the ring</p>
-        </div>
-      </Html>
     </group>
   );
 }

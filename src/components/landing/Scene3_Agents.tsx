@@ -2,7 +2,7 @@
 
 import { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { Float, Text, Html } from '@react-three/drei';
+import { Float } from '@react-three/drei';
 import * as THREE from 'three';
 import AgentBot from './AgentBot';
 
@@ -89,37 +89,6 @@ export default function Scene3_Agents() {
         />
       ))}
 
-      <Float speed={0.3} rotationIntensity={0} floatIntensity={0.2}>
-        <Text
-          position={[0, 3.5, 0]}
-          fontSize={0.45}
-          color="#ffffff"
-          anchorX="center"
-          anchorY="middle"
-        >
-          CHOOSE YOUR AGENT
-        </Text>
-        <Text
-          position={[0, 2.8, 0]}
-          fontSize={0.2}
-          color="#a1a1aa"
-          anchorX="center"
-          anchorY="middle"
-        >
-          Hover over an agent to learn more
-        </Text>
-      </Float>
-
-      <Html position={[0, -4.5, 0]} center>
-        <div className="text-center pointer-events-none">
-          <div className="flex gap-3 justify-center">
-            <button className="pointer-events-auto px-6 py-3 rounded-2xl bg-gradient-to-r from-violet-600 to-purple-600 text-white font-semibold text-sm shadow-lg shadow-violet-500/25 hover:shadow-violet-500/40 transition-all">
-              Deploy Your Agent Fleet
-            </button>
-          </div>
-          <p className="mt-3 text-white/30 text-xs tracking-widest uppercase">Scroll up to begin</p>
-        </div>
-      </Html>
     </group>
   );
 }

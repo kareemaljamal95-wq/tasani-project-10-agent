@@ -2,7 +2,7 @@
 
 import { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { Stars, Float, Text, Html } from '@react-three/drei';
+import { Stars, Float } from '@react-three/drei';
 import * as THREE from 'three';
 
 function PortalRing({ radius, tube, color, speed, offset = 0 }: { radius: number; tube: number; color: string; speed: number; offset?: number }) {
@@ -107,26 +107,6 @@ export default function Scene1_Portal() {
         </group>
       </Float>
 
-      <Text
-        position={[0, 3.5, -3]}
-        fontSize={0.5}
-        color="#ffffff"
-        anchorX="center"
-        anchorY="middle"
-      >
-        TASAMI OS
-      </Text>
-
-      <Html position={[0, -4, -3]} center>
-        <div className="text-center pointer-events-none">
-          <p className="text-white/40 text-sm tracking-widest uppercase">Scroll to explore the universe</p>
-          <div className="mt-2 flex justify-center gap-1">
-            {[0, 1, 2].map((i) => (
-              <div key={i} className="h-1.5 w-1.5 rounded-full bg-violet-400/50 animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
-            ))}
-          </div>
-        </div>
-      </Html>
     </group>
   );
 }
