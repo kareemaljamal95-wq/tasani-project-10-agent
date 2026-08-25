@@ -68,6 +68,35 @@
     @apply border border-transparent bg-gradient-to-b from-violet-600/20 to-purple-600/20 bg-clip-border;
   }
 
+  /* Staggered entrance for a grid of cards.
+     Pure CSS rather than an animation library: framer-motion is not a
+     dependency here, and adding one to fade five cards in would cost more
+     bundle than the whole dashboard. The delay is set inline per card. */
+  .rise {
+    opacity: 0;
+    animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(14px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* Respect the viewer's setting. Motion is decoration; the data is the
+     point, and it must arrive either way. */
+  @media (prefers-reduced-motion: reduce) {
+    .rise {
+      opacity: 1;
+      animation: none;
+    }
+  }
+
   .animate-in {
     animation: animate-in 0.2s ease-out;
   }

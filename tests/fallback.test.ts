@@ -1,4 +1,4 @@
-import { beforeAll, afterAll, describe, expect, it } from 'vitest';
+import { beforeAll, beforeEach, afterAll, afterEach, describe, expect, it } from 'vitest';
 import { prisma } from '@/lib/prisma';
 import { createTestUser, giveTestSubscription, provisionAgents, resetDatabase } from './helpers';
 import { executeAgent } from '@/lib/agent-execution';
@@ -40,5 +40,57 @@ describe.skipIf(!HAS_KEY)('provider fallback (live)', () => {
     expect(r.status).toBe('blocked');
     const after = await prisma.usageCounter.aggregate({ where: { userId }, _sum: { count: true } });
     expect(after._sum.count ?? 0).toBe(before._sum.count ?? 0);
+  });
+});
+
+/**
+ * Chain construction, without touching a network.
+ *
+ * These matter because the chain decides how many doomed calls a single agent
+ * run makes. The defaults request `gpt-4o` and `claude-sonnet-4-5`, so on an
+ * instance funded only for Gemini a chain that led with the requested model
+ * paid a failed round trip on every request.
+ */
+describe('fallbackModels', () => {
+  const KEYS = ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GEMINI_API_KEY'] as const;
+  const saved: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    for (const k of KEYS) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+  });
+
+  afterEach(() => {
+    for (const k of KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+
+  it('omits a requested model whose provider holds no key', async () => {
+    process.env.GEMINI_API_KEY = 'test-key';
+    const { fallbackModels } = await import('@/lib/ai/provider');
+
+    const chain = fallbackModels('gpt-4o');
+
+    expect(chain).not.toContain('gpt-4o');
+    expect(chain[0]).toMatch(/^gemini/);
+  });
+
+  it('leads with the requested model when its provider is configured', async () => {
+    process.env.OPENAI_API_KEY = 'test-key';
+    const { fallbackModels } = await import('@/lib/ai/provider');
+
+    expect(fallbackModels('gpt-4o')[0]).toBe('gpt-4o');
+  });
+
+  it('returns nothing when no provider is configured', async () => {
+    const { fallbackModels } = await import('@/lib/ai/provider');
+
+    // An empty chain is the honest answer; generateAIResponse turns it into an
+    // error naming the missing variables rather than a failed call.
+    expect(fallbackModels('gpt-4o')).toEqual([]);
   });
 });

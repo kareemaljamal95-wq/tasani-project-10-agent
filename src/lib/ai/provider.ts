@@ -165,7 +165,7 @@ async function callProvider(params: {
  * attempted first; the rest are a safety net, and the response reports which
  * provider actually answered so a silent substitution is visible.
  */
-function fallbackModels(requested: string): string[] {
+export function fallbackModels(requested: string): string[] {
   const preferred: Record<AIProvider, string> = {
     openai: 'gpt-4o-mini',
     anthropic: 'claude-haiku-4-5',
@@ -178,8 +178,15 @@ function fallbackModels(requested: string): string[] {
     gemini: Boolean(process.env.GEMINI_API_KEY),
   };
 
+  // The requested model leads only when its provider actually holds a key.
+  // Keeping it first unconditionally meant every agent run opened with a call
+  // that could not succeed — the defaults ask for gpt-4o and
+  // claude-sonnet-4-5, so an instance funded only for Gemini paid a failed
+  // round trip, and a line of alarming log, on every single request.
+  const requestedIsUsable = configured[getModelProvider(requested)] ?? false;
+
   const seen = new Set<string>([requested]);
-  const chain = [requested];
+  const chain = requestedIsUsable ? [requested] : [];
 
   for (const provider of ['gemini', 'openai', 'anthropic'] as AIProvider[]) {
     const candidate = preferred[provider];
@@ -202,6 +209,20 @@ export async function generateAIResponse(params: {
 }): Promise<AIResponse> {
   const requested = params.model ?? 'gpt-4o';
   const chain = fallbackModels(requested);
+
+  // Now reachable: dropping unusable models from the chain means an instance
+  // with no provider key at all produces none. Fail closed with a message that
+  // names the cause, rather than throwing an error wrapping `undefined`.
+  if (chain.length === 0) {
+    throw new AIProviderError(
+      getModelProvider(requested),
+      requested,
+      new Error(
+        'No AI provider is configured. Set OPENAI_API_KEY, ANTHROPIC_API_KEY or GEMINI_API_KEY.',
+      ),
+    );
+  }
+
   let lastError: unknown;
 
   for (const model of chain) {
