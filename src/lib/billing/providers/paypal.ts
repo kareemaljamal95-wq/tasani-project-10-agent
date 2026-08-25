@@ -347,6 +347,17 @@ export class PayPalProvider implements BillingProvider {
         status: resource.status,
         customId: resource.custom_id,
         planId: resource.plan_id,
+        // On a capture event `resource.id` is the capture, not the order, so
+        // the order id has to come from the supplementary block. It is what
+        // links the payment back to the checkout that started it.
+        orderId:
+          (
+            (
+              resource.supplementary_data as
+                | { related_ids?: { order_id?: string } }
+                | undefined
+            )?.related_ids?.order_id
+          ) ?? (resource.id as string | undefined),
       },
     };
   }

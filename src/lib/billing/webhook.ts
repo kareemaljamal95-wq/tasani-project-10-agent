@@ -3,7 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { logger } from '@/lib/logger';
 import { getProvider } from './index';
 import { hashPayload } from './providers/paypal';
-import { transitionSubscription } from './subscription';
+import { transitionSubscription, activateFromCheckout } from './subscription';
 
 /**
  * Provider webhook processing.
@@ -130,11 +130,47 @@ export async function processWebhook(
     return { status: 'ignored', eventId, reason: 'Unhandled event type.' };
   }
 
-  const subscription = await findSubscription(
+  let subscription = await findSubscription(
     provider.name,
     verified.providerSubscriptionId,
     verified.metadata,
   );
+
+  // A first-time buyer has no subscription to transition — the row does not
+  // exist until something creates it, and until now nothing did. An activating
+  // event is exactly the moment it should. Restricted to activating events on
+  // purpose: provisioning from a refund would manufacture a subscription out
+  // of its own ending.
+  if (!subscription && targetStatus === SubscriptionStatus.ACTIVE) {
+    const userId = verified.metadata.customId;
+    const orderId = verified.metadata.orderId;
+
+    if (typeof userId === 'string' && userId.length > 0) {
+      try {
+        subscription = await activateFromCheckout(
+          userId,
+          provider.name,
+          typeof orderId === 'string' ? orderId : null,
+        );
+      } catch (error) {
+        // The unique constraint on (provider, providerSubscriptionId) rejects a
+        // concurrent second activation for the same order. That is the guard
+        // working, not a failure: re-read rather than create.
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002'
+        ) {
+          subscription = await findSubscription(
+            provider.name,
+            verified.providerSubscriptionId,
+            verified.metadata,
+          );
+        } else {
+          throw error;
+        }
+      }
+    }
+  }
 
   if (!subscription) {
     // A verified event for something this deployment does not know about.

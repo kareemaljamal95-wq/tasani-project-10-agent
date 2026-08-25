@@ -537,6 +537,78 @@ describe('webhooks', () => {
     expect(capturedOrders).toEqual(['ORDER-42']);
   });
 
+  it('provisions a subscription for a first-time buyer on capture', async () => {
+    // Nothing in the codebase created a Subscription row, so a first-time
+    // buyer's capture event found nothing to transition and the customer paid
+    // for nothing. The paid event itself has to bring the subscription into
+    // existence.
+    const user = await createTestUser();
+
+    const checkout = await startCheckout({
+      userId: user.id,
+      planCode: 'growth',
+      interval: 'MONTH',
+      idempotencyKey: 'provision-1',
+    });
+
+    const order = await prisma.checkoutSession.findUniqueOrThrow({
+      where: { id: checkout.checkoutId },
+    });
+
+    expect(await prisma.subscription.count({ where: { userId: user.id } })).toBe(0);
+
+    verifyResult = {
+      verified: true,
+      eventId: 'evt-capture',
+      eventType: 'PAYMENT.CAPTURE.COMPLETED',
+      providerSubscriptionId: null,
+      metadata: { customId: user.id, orderId: order.providerOrderId },
+    };
+
+    const outcome = await processWebhook('{"id":"evt-capture"}', {});
+    expect(outcome.status).toBe('processed');
+
+    const created = await prisma.subscription.findFirstOrThrow({
+      where: { userId: user.id },
+    });
+    expect(created.status).toBe(SubscriptionStatus.ACTIVE);
+    // Amount is the server-resolved one from the checkout, never a client value.
+    expect(created.amount).toBe(order.amount);
+    expect(created.currency).toBe(order.currency);
+    expect(created.currentPeriodEnd).not.toBeNull();
+
+    const closed = await prisma.checkoutSession.findUniqueOrThrow({
+      where: { id: checkout.checkoutId },
+    });
+    expect(closed.status).toBe('COMPLETED');
+  });
+
+  it('does not provision a subscription from a refund', async () => {
+    // Provisioning on a terminating event would manufacture a subscription out
+    // of its own ending.
+    const user = await createTestUser();
+
+    await startCheckout({
+      userId: user.id,
+      planCode: 'growth',
+      interval: 'MONTH',
+      idempotencyKey: 'provision-2',
+    });
+
+    verifyResult = {
+      verified: true,
+      eventId: 'evt-refund',
+      eventType: 'PAYMENT.CAPTURE.REFUNDED',
+      providerSubscriptionId: null,
+      metadata: { customId: user.id },
+    };
+
+    const outcome = await processWebhook('{"id":"evt-refund"}', {});
+
+    expect(outcome.status).toBe('ignored');
+    expect(await prisma.subscription.count({ where: { userId: user.id } })).toBe(0);
+  });
+
   it('surfaces a failed capture so the provider retries', async () => {
     await createTestUser();
     captureFails = true;

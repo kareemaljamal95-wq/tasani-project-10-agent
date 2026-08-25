@@ -126,3 +126,95 @@ export async function expireLapsedSubscriptions(now = new Date()): Promise<numbe
 
   return expired;
 }
+
+/**
+ * Creates the subscription a paid checkout earned.
+ *
+ * Nothing else in the codebase creates a `Subscription` row. The webhook
+ * handler could only ever *transition* one, so a first-time buyer's capture
+ * event found no subscription, was recorded as "no matching subscription", and
+ * the customer paid for nothing. This is where a paid checkout becomes access.
+ *
+ * Only ever called for an activating event. Provisioning on a refund or a
+ * cancellation would manufacture a subscription out of its own ending.
+ *
+ * `providerSubscriptionId` is set to the provider's order id so the
+ * `@@unique([provider, providerSubscriptionId])` constraint — described in the
+ * schema as the guard against a duplicate activation creating a second row —
+ * actually has something to guard.
+ */
+export async function activateFromCheckout(
+  userId: string,
+  provider: string,
+  providerOrderId: string | null,
+): Promise<Subscription | null> {
+  // Prefer the exact order. Fall back to the account's most recent checkout,
+  // because not every provider event carries an order id.
+  const checkout =
+    (providerOrderId
+      ? await prisma.checkoutSession.findFirst({
+          where: { provider, providerOrderId },
+        })
+      : null) ??
+    (await prisma.checkoutSession.findFirst({
+      where: { userId, provider },
+      orderBy: { createdAt: 'desc' },
+    }));
+
+  if (!checkout) {
+    logger.warn('Paid event with no checkout to provision from', {
+      userId,
+      provider,
+    });
+    return null;
+  }
+
+  const price = await prisma.price.findUnique({
+    where: { id: checkout.priceId },
+    include: { plan: true },
+  });
+
+  if (!price) {
+    logger.error('Checkout references a price that no longer exists', {
+      checkoutId: checkout.id,
+    });
+    return null;
+  }
+
+  const start = new Date();
+  const end = new Date(start);
+  if (price.interval === 'YEAR') end.setFullYear(end.getFullYear() + 1);
+  else end.setMonth(end.getMonth() + 1);
+
+  const subscription = await prisma.subscription.create({
+    data: {
+      userId,
+      planId: price.planId,
+      priceId: price.id,
+      provider,
+      providerSubscriptionId: checkout.providerOrderId,
+      status: SubscriptionStatus.ACTIVE,
+      // Amount and currency come from the checkout, which resolved them
+      // server-side from the catalogue. The client never supplied either.
+      currency: checkout.currency,
+      amount: checkout.amount,
+      interval: price.interval,
+      currentPeriodStart: start,
+      currentPeriodEnd: end,
+    },
+  });
+
+  await prisma.checkoutSession.update({
+    where: { id: checkout.id },
+    data: { status: 'COMPLETED' },
+  });
+
+  logger.info('Subscription provisioned from checkout', {
+    userId,
+    checkoutId: checkout.id,
+    subscriptionId: subscription.id,
+    planCode: price.plan.code,
+  });
+
+  return subscription;
+}
