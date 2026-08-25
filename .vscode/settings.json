@@ -1,0 +1,10 @@
+{
+  "// why": "TypeScript is the quality gate here — there is no lint script and must not be one (no eslint config, and Next 16 removed `next lint`). These settings make the editor agree with `npm run typecheck`.",
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+  "search.exclude": {
+    "**/.next": true,
+    "**/node_modules": true
+  },
+  "files.eol": "\n"
+}

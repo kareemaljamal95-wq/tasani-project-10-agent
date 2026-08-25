@@ -1,0 +1,6 @@
+{
+  "// why": "Opening this repo in VS Code prompts to install these. Cline reads .clinerules on its own, so it inherits this project's invariants the moment it is enabled — the approval gate, userId scoping, and the traps recorded in CLAUDE.md.",
+  "recommendations": [
+    "saoudrizwan.claude-dev"
+  ]
+}
