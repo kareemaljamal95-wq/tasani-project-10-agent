@@ -141,9 +141,42 @@ currency and any promotional price are resolved server-side. A request carrying
 runtime: a checkout posted with `amount=1, currency=XXX, priceId=forged` for
 the Scale plan stored `39900 USD`.
 
-**A browser return from PayPal activates nothing.** Only a signature-verified
-webhook changes billing state. `/billing/return` reports the current state and
-asks the customer to wait if confirmation has not arrived.
+**A browser return from PayPal activates nothing.** The browser is never the
+authority. `/billing/return` reports the current state and asks the customer to
+wait if confirmation has not arrived; it also triggers reconciliation, which
+asks PayPal directly rather than trusting anything the page was handed. The
+session decides *which* checkout may be examined; whether money moved is
+answered by an authenticated call to the provider, which no browser can forge.
+Another account's checkout reads as not-found.
+
+**The payment path had three independent silent breaks**, each hiding the next.
+They are recorded because the shape of the failure matters more than the fix:
+every one of them looked like nothing at all.
+
+1. *Nothing captured the order.* `createCheckout` opens it with `intent:
+   CAPTURE`, and PayPal leaves such an order `APPROVED` until the merchant
+   calls capture. No code did. No money moved and no capture event was ever
+   emitted.
+2. *`CHECKOUT.ORDER.APPROVED` was not subscribed* on the PayPal webhook — it
+   carried thirteen event types, and not that one. It is what triggers the
+   capture, so the fix for (1) was inert without it.
+3. *Nothing created a `Subscription` row.* Every write path was `update`,
+   `findFirst` or `count`; there was no `prisma.subscription.create` outside
+   test fixtures. A first-time buyer's capture event found no subscription to
+   transition, was recorded as "no matching subscription", and the customer
+   paid for nothing.
+
+The lesson worth keeping: (1) hid (2) hid (3). With no capture there was no
+capture event, and with no capture event nothing revealed that activation had
+nowhere to land. A green health check and a passing suite said nothing about
+any of it, because no test and no probe had ever driven a payment end to end.
+
+**Webhook delivery is no longer a single point of failure for revenue.**
+`reconcileCheckout` (`src/lib/billing/checkout.ts`) settles a checkout against
+the provider: it captures an order the buyer approved but nothing collected,
+then provisions from the checkout. Anything short of a paid order returns
+`pending` and grants nothing. So a delayed, misrouted or unconfigured webhook
+can no longer strand a customer who has actually paid.
 
 Webhook endpoint: `POST /api/billing/webhooks/paypal`. It fails closed —
 without `PAYPAL_WEBHOOK_ID` every delivery is rejected. Idempotency comes from
