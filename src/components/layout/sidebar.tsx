@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Bot, Brain, Calendar, TrendingUp, Briefcase, ShoppingCart, Sparkles, LayoutDashboard, ChevronLeft, CreditCard, ShieldCheck, Users, X, Workflow } from 'lucide-react';
+import { Bot, Brain, Calendar, TrendingUp, Briefcase, ShoppingCart, Sparkles, LayoutDashboard, ChevronLeft, CreditCard, ShieldCheck, Users, X, Workflow, Globe } from 'lucide-react';
 
 const navItems = [
   { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
@@ -11,6 +11,9 @@ const navItems = [
   // to work through, and nothing goes out until they do.
   { href: '/approvals', icon: ShieldCheck, label: 'Approvals' },
   { href: '/leads', icon: Users, label: 'Leads' },
+  // Directly after leads: the strongest scoring signal is a prospect with no
+  // website, and this is what gets delivered to them.
+  { href: '/sites', icon: Globe, label: 'Sites' },
   { href: '/automations', icon: Workflow, label: 'Automations' },
   { href: '/executive', icon: Calendar, label: 'Executive' },
   { href: '/business', icon: Briefcase, label: 'Business' },

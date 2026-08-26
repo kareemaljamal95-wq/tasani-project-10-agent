@@ -29,6 +29,13 @@ export const USAGE_METRIC = 'ai_actions';
  */
 export const DISCOVERY_METRIC = 'discovery_scans';
 
+/**
+ * Site builds. A third metered unit, added without a schema change because
+ * `UsageCounter` is keyed on (userId, periodKey, metric) rather than carrying
+ * one column per capability.
+ */
+export const SITE_METRIC = 'site_builds';
+
 export interface UsagePeriod {
   key: string;
   start: Date;
@@ -141,7 +148,7 @@ export class UsageLimitError extends Error {
 export async function consumeMetric(
   userId: string,
   metric: string,
-  limitKey: 'aiActions.monthly' | 'discovery.monthly',
+  limitKey: 'aiActions.monthly' | 'discovery.monthly' | 'sites.monthly',
 ): Promise<UsageSnapshot> {
   const entitlements = await getEntitlements(userId);
 
@@ -219,4 +226,15 @@ export function consumeAiAction(userId: string): Promise<UsageSnapshot> {
  */
 export function consumeDiscoveryScan(userId: string): Promise<UsageSnapshot> {
   return consumeMetric(userId, DISCOVERY_METRIC, 'discovery.monthly');
+}
+
+/**
+ * Reserves one site build, or refuses.
+ *
+ * Its own budget, for the same reason discovery has one: building a page runs
+ * a deterministic parser and renderer, not a model. An owner who has spent the
+ * month's agent runs must still be able to deliver a site they already sold.
+ */
+export function consumeSiteBuild(userId: string): Promise<UsageSnapshot> {
+  return consumeMetric(userId, SITE_METRIC, 'sites.monthly');
 }

@@ -39,6 +39,7 @@ model User {
   offerRedemptions OfferRedemption[]
   usageCounters  UsageCounter[]
   checkoutSessions CheckoutSession[]
+  generatedSites   GeneratedSite[]
 
   /// First-run onboarding. Null until the user finishes; set once so the flow
   /// never runs again. `onboardingStep` makes it resumable mid-way.
@@ -384,6 +385,7 @@ model Lead {
   agentRuns  AgentRun[]
   activities Activity[]
   jobs       Job[]
+  sites      GeneratedSite[]
 
   /// Deduplicates imports and automated creation within an account.
   @@unique([userId, email])
@@ -820,4 +822,39 @@ model UsageCounter {
 
   @@unique([userId, periodKey, metric])
   @@index([userId, periodKey])
+}
+
+/// A website generated for a business, from raw pasted text.
+///
+/// `profile` is stored beside `html` on purpose: the profile is the source of
+/// truth and the html is a render of it, so a later template change can rebuild
+/// the page without asking the owner to paste the listing again. Keeping only
+/// the html would make every stored site a dead end.
+model GeneratedSite {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// The prospect this was built for, when it came from one. Optional because
+  /// an owner may generate a site before the business exists as a lead.
+  leadId String?
+  lead   Lead?   @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  /// Business name, denormalised so a list renders without parsing the JSON.
+  name String
+
+  /// The parsed BusinessProfile, including the recorded gaps.
+  profile Json
+
+  /// Theme id from src/lib/sitegen/theme.ts.
+  theme String
+
+  /// The rendered, self-contained page.
+  html String
+
+  @@index([userId, createdAt])
+  @@index([userId, leadId])
 }

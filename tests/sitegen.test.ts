@@ -1,0 +1,203 @@
+import { describe, expect, it } from 'vitest';
+import {
+  parseBusiness,
+  renderSite,
+  EmptySourceError,
+  THEMES,
+  findTheme,
+  blockingGaps,
+} from '@/lib/sitegen';
+
+/**
+ * Site generation.
+ *
+ * The load-bearing assertions here are the negative ones. Anyone can check
+ * that a parser reads a phone number; what protects the product is proving
+ * that a page built from incomplete input contains no price, no opening hour
+ * and no service the source never stated.
+ */
+
+const MAPS_PASTE = `مطعم الواحة الذهبية
+4.6 ★ (312)
+مطعم شرق أوسطي
+شارع التحلية، حي العليا، الرياض
++966 11 456 7890
+info@alwaha.example
+الأحد - الخميس 12:00 - 23:00
+الجمعة 16:00 - 23:00
+- مندي لحم 85 ر.س
+- كبسة دجاج 65 ر.س
+- سلطة موسم
+www.alwaha.example`;
+
+/** What a real listing usually looks like: a name, a category, and little else. */
+const SPARSE_PASTE = `ورشة النخبة لصيانة السيارات
+ورشة سيارات
+الدمام`;
+
+describe('parsing a pasted listing', () => {
+  it('reads the fields the source actually stated', () => {
+    const p = parseBusiness({ raw: MAPS_PASTE });
+
+    expect(p.name).toBe('مطعم الواحة الذهبية');
+    expect(p.rating).toBe(4.6);
+    expect(p.ratingCount).toBe(312);
+    expect(p.phone).toContain('966');
+    expect(p.email).toBe('info@alwaha.example');
+    expect(p.address).toContain('التحلية');
+    expect(p.locale).toBe('ar');
+  });
+
+  it('attaches a price only to the service it was written beside', () => {
+    const p = parseBusiness({ raw: MAPS_PASTE });
+
+    const mandi = p.services.find((s) => s.name.includes('مندي'));
+    const salad = p.services.find((s) => s.name.includes('سلطة'));
+
+    expect(mandi?.price).toContain('85');
+    // The salad line carried no price, so it gets none — a price from another
+    // line belongs to something unknown, and guessing is the invention this
+    // parser exists to refuse.
+    expect(salad).toBeDefined();
+    expect(salad?.price).toBeUndefined();
+  });
+
+  it('reads each hours line separately rather than inventing a week', () => {
+    const p = parseBusiness({ raw: MAPS_PASTE });
+
+    expect(p.hours).toHaveLength(2);
+    expect(p.hours[0].hours).toBe('12:00 - 23:00');
+    expect(p.hours[1].days).toContain('الجمعة');
+  });
+
+  it('records what a sparse listing did not say', () => {
+    const p = parseBusiness({ raw: SPARSE_PASTE });
+
+    expect(p.name).toBe('ورشة النخبة لصيانة السيارات');
+    expect(p.services).toHaveLength(0);
+    expect(p.hours).toHaveLength(0);
+    expect(p.phone).toBeUndefined();
+
+    for (const gap of ['services', 'prices', 'hours', 'phone', 'about'] as const) {
+      expect(p.missing).toContain(gap);
+    }
+  });
+
+  it('refuses empty input instead of producing an empty site', () => {
+    expect(() => parseBusiness({ raw: '   \n  \n' })).toThrow(EmptySourceError);
+  });
+
+  it('detects language from the text rather than assuming', () => {
+    expect(parseBusiness({ raw: 'Elite Auto Care\nGarage\nDammam' }).locale).toBe('en');
+  });
+
+  it('names blocking gaps separately from cosmetic ones', () => {
+    const p = parseBusiness({ raw: SPARSE_PASTE });
+    const blocking = blockingGaps(p.missing);
+
+    // No phone and no services means the page cannot do its job; a missing
+    // tagline only makes it thinner.
+    expect(blocking).toContain('phone');
+    expect(blocking).toContain('services');
+    expect(blocking).not.toContain('tagline');
+  });
+});
+
+describe('rendering', () => {
+  it('invents no price, hour or service for a sparse listing', () => {
+    const html = renderSite(parseBusiness({ raw: SPARSE_PASTE }));
+
+    // The strongest guarantee this platform makes, asserted directly: no
+    // currency, no clock time, and no digit pretending to be a rating.
+    expect(html).not.toMatch(/ر\.?س|ريال|SAR|\$\s*\d/u);
+    expect(html).not.toMatch(/\d{1,2}:\d{2}/u);
+    expect(html).not.toMatch(/\d\.\d\s*·/u);
+  });
+
+  it('shows each gap as a request for data', () => {
+    const html = renderSite(parseBusiness({ raw: SPARSE_PASTE }));
+
+    expect(html).toContain('slot');
+    expect(html).toContain('أضف خدماتك');
+    expect(html).toContain('أضف أيام وساعات العمل');
+  });
+
+  it('carries stated values through unchanged', () => {
+    const html = renderSite(parseBusiness({ raw: MAPS_PASTE }));
+
+    expect(html).toContain('مطعم الواحة الذهبية');
+    expect(html).toContain('85');
+    expect(html).toContain('12:00 - 23:00');
+    expect(html).toContain('4.6');
+  });
+
+  it('produces one self-contained file with no build step', () => {
+    const html = renderSite(parseBusiness({ raw: MAPS_PASTE }));
+
+    expect(html.startsWith('<!doctype html>')).toBe(true);
+    expect(html).toContain('</html>');
+    // Fonts are the single permitted outbound request; nothing else is fetched.
+    const externals = html.match(/https?:\/\/[^"')\s]+/g) ?? [];
+    for (const url of externals) {
+      expect(url).toMatch(/fonts\.(googleapis|gstatic)\.com/);
+    }
+  });
+
+  it('escapes a name that would otherwise break the markup', () => {
+    const html = renderSite(parseBusiness({ raw: 'Smith & Sons <Auto>\nGarage' }));
+
+    expect(html).toContain('Smith &amp; Sons &lt;Auto&gt;');
+    expect(html).not.toContain('<Auto>');
+  });
+
+  it('sets direction from the profile locale', () => {
+    expect(renderSite(parseBusiness({ raw: MAPS_PASTE }))).toContain('dir="rtl"');
+    expect(renderSite(parseBusiness({ raw: 'Elite Auto\nGarage' }))).toContain('dir="ltr"');
+  });
+
+  it('is responsive without a single media query for layout', () => {
+    const html = renderSite(parseBusiness({ raw: MAPS_PASTE }));
+
+    // Fluid type and intrinsic grids, so hand-editing the file cannot leave a
+    // breakpoint tuned for content that has since changed.
+    expect(html).toContain('clamp(');
+    expect(html).toContain('auto-fit');
+    const layoutQueries = (html.match(/@media[^{]+\{/g) ?? []).filter(
+      (q) => !q.includes('prefers-reduced-motion'),
+    );
+    expect(layoutQueries).toHaveLength(0);
+  });
+
+  it('documents its own design tokens for whoever receives the file', () => {
+    const html = renderSite(parseBusiness({ raw: MAPS_PASTE }));
+
+    expect(html).toContain('--brand:');
+    expect(html).toContain('عدّل هذه القيم');
+  });
+});
+
+describe('themes', () => {
+  it('falls back to a real theme for an unknown id', () => {
+    expect(findTheme('nonexistent').id).toBe(THEMES[0].id);
+  });
+
+  it('gives every theme a complete token set', () => {
+    for (const theme of THEMES) {
+      for (const value of Object.values(theme.tokens)) {
+        expect(value).toBeTruthy();
+      }
+      expect(theme.fonts.display).toBeTruthy();
+      expect(theme.fonts.body).toBeTruthy();
+    }
+  });
+
+  it('renders every theme without losing content', () => {
+    const profile = parseBusiness({ raw: MAPS_PASTE });
+
+    for (const theme of THEMES) {
+      const html = renderSite(profile, { themeId: theme.id });
+      expect(html).toContain('مطعم الواحة الذهبية');
+      expect(html).toContain(theme.tokens.brand);
+    }
+  });
+});

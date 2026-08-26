@@ -29,6 +29,10 @@ export interface PlanLimits {
   /** Discovery scans per billing period. Separate from aiActions.monthly
    *  because a scan calls a directory, not a model. */
   'discovery.monthly': number;
+  /** Generated sites per billing period. Its own budget because building a
+   *  page runs a deterministic parser and renderer, not a model — exhausting
+   *  agent runs must not stop an owner from delivering a site they sold. */
+  'sites.monthly': number;
   'approvals.enabled': boolean;
   'advancedAutomation.enabled': boolean;
   'prioritySupport.enabled': boolean;
@@ -69,6 +73,7 @@ export const PLAN_CATALOG: CatalogPlan[] = [
       'leads.enabled': true,
       'discovery.enabled': false,
       'discovery.monthly': 0,
+      'sites.monthly': 3,
       'approvals.enabled': true,
       'advancedAutomation.enabled': false,
       'prioritySupport.enabled': false,
@@ -99,6 +104,7 @@ export const PLAN_CATALOG: CatalogPlan[] = [
       'leads.enabled': true,
       'discovery.enabled': true,
       'discovery.monthly': 50,
+      'sites.monthly': 25,
       'approvals.enabled': true,
       'advancedAutomation.enabled': true,
       'prioritySupport.enabled': false,
@@ -129,6 +135,7 @@ export const PLAN_CATALOG: CatalogPlan[] = [
       'leads.enabled': true,
       'discovery.enabled': true,
       'discovery.monthly': 300,
+      'sites.monthly': 150,
       'approvals.enabled': true,
       'advancedAutomation.enabled': true,
       'prioritySupport.enabled': true,
@@ -160,6 +167,7 @@ export const UNENTITLED_LIMITS: PlanLimits = {
   'seats.max': 1,
   'aiActions.monthly': 0,
   'discovery.enabled': false,
+  'sites.monthly': 0,
   'discovery.monthly': 0,
   'leads.enabled': false,
   'approvals.enabled': false,
