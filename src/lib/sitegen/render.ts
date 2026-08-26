@@ -39,6 +39,21 @@ function slot(field: ProfileField): string {
       </div>`;
 }
 
+/**
+ * A monogram favicon, inlined as a data URI.
+ *
+ * Without one the browser falls back to requesting /favicon.ico from whatever
+ * host is serving the page and logs a 404 — on every visit, in every visitor's
+ * console. Inlining it also keeps the promise that the file is self-contained:
+ * a favicon that lives beside the html would be a second file to deliver, and
+ * the owner would eventually send only one of them.
+ */
+function favicon(profile: BusinessProfile, theme: Theme): string {
+  const initial = esc(profile.name.trim().charAt(0) || '•');
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="${theme.tokens.brand}"/><text x="32" y="44" font-family="system-ui,sans-serif" font-size="36" font-weight="700" text-anchor="middle" fill="${theme.tokens.brandInk}">${initial}</text></svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+
 function fontLink(theme: Theme): string {
   const families = [theme.fonts.display, theme.fonts.body]
     .map((f) => `family=${f.replace(/ /g, '+')}:wght@400;500;600;700`)
@@ -148,6 +163,7 @@ export function renderSite(
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(profile.name)}</title>
 ${present(profile.about) ? `<meta name="description" content="${esc(profile.about.slice(0, 155))}">` : ''}
+<link rel="icon" href="${favicon(profile, theme)}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="${fontLink(theme)}">

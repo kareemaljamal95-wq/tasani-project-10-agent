@@ -143,6 +143,17 @@ describe('rendering', () => {
     }
   });
 
+  it('carries its own favicon so no visitor gets a 404', () => {
+    const html = renderSite(parseBusiness({ raw: MAPS_PASTE }));
+
+    // Inlined rather than linked: without it every browser falls back to
+    // requesting /favicon.ico from whatever host serves the page, and a site
+    // delivered to a paying customer should not log a 404 on every visit.
+    expect(html).toContain('<link rel="icon" href="data:image/svg+xml,');
+    // And it must not become a second file the owner has to remember to send.
+    expect(html).not.toMatch(/rel="icon" href="\/?favicon/);
+  });
+
   it('escapes a name that would otherwise break the markup', () => {
     const html = renderSite(parseBusiness({ raw: 'Smith & Sons <Auto>\nGarage' }));
 
