@@ -183,12 +183,16 @@ out center tags ${limit};`;
     }
 
     if (!body) {
-      // Every mirror refused. Fail closed and say so plainly, rather than
-      // returning an empty list that reads as "this market has no businesses".
+      // Measured, not assumed: every public Overpass mirror answers 503 from
+      // this deployment — including `/api/status`, which is a health check too
+      // cheap to be shed under load. These volunteer instances block
+      // datacentre traffic, so a server-side caller cannot reach them however
+      // politely it asks. Saying "retry" would send the owner in circles, so
+      // the message names the actual remedy instead.
       throw new DiscoveryProviderError(
-        lastStatus === 429 || lastStatus === 504 || lastStatus === 503
-          ? 'خدمة الخرائط المجانية مشغولة الآن. أعد المحاولة بعد دقيقة.'
-          : 'تعذّر الوصول إلى خدمة الخرائط المجانية.',
+        'الاكتشاف التلقائي يحتاج مفتاح Google Places. خدمات الخرائط المجانية ' +
+          'تحجب الطلبات القادمة من الخوادم. يمكنك إضافة العملاء يدويًا الآن، ' +
+          'والوكلاء يعملون عليهم كالمعتاد.',
       );
     }
 

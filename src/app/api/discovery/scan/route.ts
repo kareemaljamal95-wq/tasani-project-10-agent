@@ -54,10 +54,10 @@ export async function POST(req: Request) {
 
     // The provider answered and refused. Transient, so 502 and retry.
     if (error instanceof DiscoveryProviderError) {
-      return NextResponse.json(
-        { error: 'The discovery provider is currently unavailable. Please retry.' },
-        { status: 502 },
-      );
+      // The provider's own message is surfaced: it is written for the owner
+      // and names the remedy. It never carries a credential — keys travel in
+      // request headers and are never echoed into an error.
+      return NextResponse.json({ error: error.message }, { status: 502 });
     }
 
     return handleRouteError(error, 'POST /api/discovery/scan');
