@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import type { ZodType } from 'zod';
+import type { ZodType, ZodTypeDef } from 'zod';
 import { getSession, type SessionPayload } from '@/lib/auth/session';
 import { env } from '@/lib/env';
 import { logger } from '@/lib/logger';
@@ -48,7 +48,11 @@ export async function requireUser(): Promise<SessionPayload> {
 /** Parses and validates a JSON body, or throws ValidationError. */
 export async function parseBody<T>(
   req: Request,
-  schema: ZodType<T>,
+  // The input side is `unknown` because that is what a parsed request body is.
+  // Spelling it out also admits schemas whose input differs from their output —
+  // a `z.preprocess` that fills in an omitted field, for one — which the
+  // narrower `ZodType<T>` silently degrades to `unknown`.
+  schema: ZodType<T, ZodTypeDef, unknown>,
 ): Promise<T> {
   let raw: unknown;
 

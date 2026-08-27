@@ -10,7 +10,12 @@ import {
 import { createLead, DuplicateLeadError, updateLead } from '@/lib/leads';
 import { executeAgent } from '@/lib/agent-execution';
 import { enqueueJob } from '@/lib/jobs';
-import { evaluateTrigger, processJobs, renderObjective } from '@/lib/automation';
+import {
+  createTriggerSchema,
+  evaluateTrigger,
+  processJobs,
+  renderObjective,
+} from '@/lib/automation';
 import { validateModelSelection } from '@/lib/ai/models';
 import { __setDiscoveryProvider } from '@/lib/discovery';
 import type {
@@ -204,6 +209,31 @@ describe('automation', () => {
     expect(await prisma.job.count({ where: { userId: user.id } })).toBe(1);
   });
 
+  it('drains only the account it was scoped to', async () => {
+    // The session-driven worker path passes the caller's own id. Without it a
+    // signed-in operator's manual run executes whatever sits at the head of the
+    // global queue — spending someone else's model budget and filing approvals
+    // in their name. Both jobs name a lead that does not exist, so each ends
+    // immediately and the assertion is about *which* one was claimed.
+    const mine = await createTestUser();
+    const theirs = await createTestUser();
+
+    for (const owner of [mine, theirs]) {
+      await enqueueJob({
+        userId: owner.id,
+        kind: 'lead_agent_action',
+        payload: { leadId: 'gone', agentType: 'SALES', objective: 'hello there' },
+      });
+    }
+
+    const drained = await processJobs('scoped-worker', 5, mine.id);
+
+    expect(drained.processed).toBe(1);
+    expect(
+      (await prisma.job.findFirst({ where: { userId: theirs.id } }))?.status,
+    ).toBe('PENDING');
+  });
+
   it('drives a trigger through the queue into a real approval', async () => {
     const user = await createTestUser();
     await provisionAgents(user.id);
@@ -361,6 +391,57 @@ describe('automation', () => {
 
     const evaluation = await evaluateTrigger(trigger.id);
     expect(evaluation.enqueued).toBe(0);
+  });
+});
+
+/**
+ * The trigger a customer can actually create.
+ *
+ * The discovery path above builds its trigger with a direct `prisma.create`,
+ * which is exactly how it stayed reachable in tests while being unreachable in
+ * the product: the API accepted one kind and the UI hardcoded it. These assert
+ * against the schema the route parses, so the two cannot drift apart again.
+ */
+describe('creating a trigger', () => {
+  it('accepts a discovery trigger with a parseable search', () => {
+    const parsed = createTriggerSchema.parse({
+      kind: 'discovery',
+      name: 'عيادات الرياض',
+      search: 'عيادة أسنان @ الرياض',
+    });
+
+    expect(parsed).toMatchObject({ kind: 'discovery', cooldownHours: 24 });
+  });
+
+  it('refuses a search with no location', () => {
+    const result = createTriggerSchema.safeParse({
+      kind: 'discovery',
+      name: 'عيادات',
+      search: 'عيادة أسنان',
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('still accepts the old body that omits kind', () => {
+    const parsed = createTriggerSchema.parse({
+      name: 'Follow up',
+      agentType: 'SALES',
+      objectiveTemplate: 'Write to {{company}}',
+    });
+
+    expect(parsed.kind).toBe('lead_status');
+  });
+
+  it('refuses a lead trigger naming an agent that does not exist', () => {
+    const result = createTriggerSchema.safeParse({
+      kind: 'lead_status',
+      name: 'Follow up',
+      agentType: 'NOT_AN_AGENT',
+      objectiveTemplate: 'Write to {{company}}',
+    });
+
+    expect(result.success).toBe(false);
   });
 });
 

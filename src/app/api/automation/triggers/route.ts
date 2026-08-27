@@ -2,8 +2,11 @@ import { NextResponse } from 'next/server';
 import { LeadStatus } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
-import { AGENT_TYPES } from '@/lib/ai/agent-defaults';
-import { evaluateTrigger } from '@/lib/automation';
+import {
+  createTriggerSchema,
+  evaluateTrigger,
+  parseDiscoverySearch,
+} from '@/lib/automation';
 import {
   handleRouteError,
   parseBody,
@@ -21,15 +24,6 @@ import { requireWithinLimit } from '@/lib/billing/entitlements';
  *
  * New triggers are created disabled: automation should be an explicit act.
  */
-const createSchema = z.object({
-  name: z.string().min(1).max(120),
-  kind: z.enum(['lead_status']).default('lead_status'),
-  leadStatus: z.nativeEnum(LeadStatus).optional(),
-  agentType: z.enum(AGENT_TYPES as [string, ...string[]]),
-  objectiveTemplate: z.string().min(5).max(2000),
-  cooldownHours: z.number().int().min(1).max(24 * 30).default(24),
-});
-
 const updateSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1).max(120).optional(),
@@ -62,18 +56,29 @@ export async function POST(req: Request) {
     const session = await requireUser();
     rateLimit(`triggers-write:${session.userId}`, 30);
 
-    const body = await parseBody(req, createSchema);
+    const body = await parseBody(req, createTriggerSchema);
 
     const trigger = await prisma.automationTrigger.create({
       data: {
         userId: session.userId,
         name: body.name,
-        kind: body.kind ?? 'lead_status',
-        leadStatus: body.leadStatus ?? null,
-        agentType: body.agentType,
-        objectiveTemplate: body.objectiveTemplate,
-        cooldownHours: body.cooldownHours ?? 24,
+        kind: body.kind,
+        cooldownHours: body.cooldownHours,
         enabled: false,
+        ...(body.kind === 'discovery'
+          ? {
+              // The search rides in objectiveTemplate, which is what
+              // evaluateDiscoveryTrigger reads. agentType is a required column
+              // that this kind never consults — no agent runs, a scan does.
+              objectiveTemplate: body.search,
+              agentType: 'discovery',
+              leadStatus: null,
+            }
+          : {
+              objectiveTemplate: body.objectiveTemplate,
+              agentType: body.agentType,
+              leadStatus: body.leadStatus ?? null,
+            }),
       },
     });
 
@@ -96,11 +101,25 @@ export async function PATCH(req: Request) {
     // data object — which would report a trigger the user owns as missing.
     const owned = await prisma.automationTrigger.findFirst({
       where: { id, userId: session.userId },
-      select: { id: true },
+      select: { id: true, kind: true },
     });
 
     if (!owned) {
       return NextResponse.json({ error: 'Trigger not found.' }, { status: 404 });
+    }
+
+    // On a discovery trigger the objective *is* the search, so an edit has to
+    // clear the same bar creation does. Otherwise a valid trigger could be
+    // edited into one that runs every cycle and silently produces nothing.
+    if (
+      owned.kind === 'discovery' &&
+      updates.objectiveTemplate !== undefined &&
+      parseDiscoverySearch(updates.objectiveTemplate) === null
+    ) {
+      return NextResponse.json(
+        { error: 'اكتب البحث بالصيغة: استعلام @ مدينة' },
+        { status: 400 },
+      );
     }
 
     // Enabling an automation consumes a paid slot. Other enabled triggers are

@@ -84,6 +84,9 @@ export function AutomationsBoard({
   const [triggers, setTriggers] = useState(initialTriggers);
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<TriggerRow | null>(null);
+  // Which trigger the form is building. Editing keeps the row's own kind: a
+  // trigger's kind decides which columns mean what, so it is fixed at creation.
+  const [kind, setKind] = useState<'lead_status' | 'discovery'>('lead_status');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -124,18 +127,29 @@ export function AutomationsBoard({
     const f = new FormData(e.currentTarget);
     const leadStatus = String(f.get('leadStatus') ?? '');
 
-    const data = await call('POST', {
-      name: String(f.get('name') ?? ''),
-      kind: 'lead_status',
-      agentType: String(f.get('agentType') ?? ''),
-      objectiveTemplate: String(f.get('objectiveTemplate') ?? ''),
-      cooldownHours: Number(f.get('cooldownHours') ?? 24),
-      ...(leadStatus ? { leadStatus } : {}),
-    });
+    const data = await call(
+      'POST',
+      kind === 'discovery'
+        ? {
+            name: String(f.get('name') ?? ''),
+            kind,
+            search: String(f.get('objectiveTemplate') ?? ''),
+            cooldownHours: Number(f.get('cooldownHours') ?? 24),
+          }
+        : {
+            name: String(f.get('name') ?? ''),
+            kind,
+            agentType: String(f.get('agentType') ?? ''),
+            objectiveTemplate: String(f.get('objectiveTemplate') ?? ''),
+            cooldownHours: Number(f.get('cooldownHours') ?? 24),
+            ...(leadStatus ? { leadStatus } : {}),
+          },
+    );
 
     if (data?.trigger) {
       setTriggers((prev) => [data.trigger, ...prev]);
       setAdding(false);
+      setKind('lead_status');
     }
   }
 
@@ -264,6 +278,28 @@ export function AutomationsBoard({
             />
 
             {!editing && (
+              <label className="block">
+                <span className="text-sm text-white/60 mb-1 block">النوع</span>
+                <select
+                  value={kind}
+                  onChange={(e) =>
+                    setKind(e.target.value as 'lead_status' | 'discovery')
+                  }
+                  className={field}
+                >
+                  <option value="lead_status" className="bg-[#0A0B12]">
+                    تشغيل وكيل على عملائك
+                  </option>
+                  <option value="discovery" className="bg-[#0A0B12]">
+                    بحث دوري عن عملاء جدد
+                  </option>
+                </select>
+              </label>
+            )}
+
+            {/* A discovery trigger has no lead status to filter and no agent to
+                run — it looks for businesses that are not leads yet. */}
+            {!editing && kind === 'lead_status' && (
               <>
                 <label className="block">
                   <span className="text-sm text-white/60 mb-1 block">الوكيل</span>
@@ -295,20 +331,42 @@ export function AutomationsBoard({
             )}
           </div>
 
-          <label className="block">
-            <span className="text-sm text-white/60 mb-1 block">
-              الهدف — استخدم {'{{company}}'} و {'{{status}}'}
-            </span>
-            <textarea
-              name="objectiveTemplate"
-              required
-              minLength={5}
-              rows={2}
-              defaultValue={editing?.objectiveTemplate}
-              className={field}
-              placeholder="اكتب رسالة تعريفية أولى إلى {{company}}"
-            />
-          </label>
+          {(editing ? editing.kind : kind) === 'discovery' ? (
+            <label className="block">
+              <span className="text-sm text-white/60 mb-1 block">
+                البحث — استعلام @ مدينة
+              </span>
+              <textarea
+                name="objectiveTemplate"
+                required
+                minLength={3}
+                rows={2}
+                dir="auto"
+                defaultValue={editing?.objectiveTemplate}
+                className={field}
+                placeholder="عيادة أسنان @ الرياض"
+              />
+              <span className="mt-1 block text-xs text-white/35">
+                يبحث مرة واحدة في اليوم مهما تكرّر تشغيل المجدول، ويستورد ما
+                يجده كعملاء محتملين.
+              </span>
+            </label>
+          ) : (
+            <label className="block">
+              <span className="text-sm text-white/60 mb-1 block">
+                الهدف — استخدم {'{{company}}'} و {'{{status}}'}
+              </span>
+              <textarea
+                name="objectiveTemplate"
+                required
+                minLength={5}
+                rows={2}
+                defaultValue={editing?.objectiveTemplate}
+                className={field}
+                placeholder="اكتب رسالة تعريفية أولى إلى {{company}}"
+              />
+            </label>
+          )}
 
           <div className="flex gap-2">
             <Button type="submit" isLoading={busy} disabled={busy}>
@@ -349,9 +407,17 @@ export function AutomationsBoard({
                   <div className="min-w-0">
                     <p className="text-white font-medium truncate">{t.name}</p>
                     <p className="text-xs text-white/40 truncate">
-                      {t.agentType} ·{' '}
-                      {t.leadStatus ? LEAD_STATUS[t.leadStatus] : 'كل الحالات'} ·
-                      كل {t.cooldownHours}س · آخر تشغيل {when(t.lastRunAt)}
+                      {/* A discovery trigger's agentType is a placeholder and
+                          its leadStatus is null, so printing them would show
+                          the customer two fields that mean nothing here. */}
+                      {t.kind === 'discovery'
+                        ? `بحث · ${t.objectiveTemplate}`
+                        : `${t.agentType} · ${
+                            t.leadStatus
+                              ? LEAD_STATUS[t.leadStatus]
+                              : 'كل الحالات'
+                          }`}{' '}
+                      · كل {t.cooldownHours}س · آخر تشغيل {when(t.lastRunAt)}
                     </p>
                   </div>
 

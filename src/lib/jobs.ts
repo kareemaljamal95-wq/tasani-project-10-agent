@@ -75,14 +75,25 @@ export async function enqueueJob(input: EnqueueInput): Promise<EnqueueResult> {
  * SKIP LOCKED is what makes this safe to run from several workers at once:
  * a row already locked by another transaction is passed over instead of
  * blocking, so two workers never take the same job.
+ *
+ * `userId` narrows the claim to one account. The scheduler omits it and drives
+ * the whole fleet, which is the point of a scheduler. A signed-in operator must
+ * pass their own id: without it, one person's manual run drains whatever
+ * happened to be at the head of the global queue — spending another account's
+ * model budget and filing approvals in their name.
  */
-export async function claimNextJob(workerId: string): Promise<Job | null> {
+export async function claimNextJob(
+  workerId: string,
+  userId?: string,
+): Promise<Job | null> {
   const staleBefore = new Date(Date.now() - LOCK_TIMEOUT_MS);
+  const owner = userId ? Prisma.sql`AND "userId" = ${userId}` : Prisma.empty;
 
   const rows = await prisma.$queryRaw<Array<{ id: string }>>`
     WITH claimed AS (
       SELECT "id" FROM "Job"
       WHERE "runAt" <= NOW()
+        ${owner}
         AND (
           "status" = 'PENDING'
           OR ("status" = 'RUNNING' AND "lockedAt" < ${staleBefore})

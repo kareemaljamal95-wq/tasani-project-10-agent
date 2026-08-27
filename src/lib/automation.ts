@@ -1,6 +1,7 @@
 import { LeadStatus } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
+import { AGENT_TYPES } from '@/lib/ai/agent-defaults';
 import { logger } from '@/lib/logger';
 import { recordActivity } from '@/lib/activity';
 import { executeAgent, ProviderUnavailableError } from '@/lib/agent-execution';
@@ -60,6 +61,61 @@ export function parseDiscoverySearch(
 
   return { query: query.trim(), location };
 }
+
+/**
+ * What a client may send to create a trigger.
+ *
+ * It lives here rather than in the route because the two kinds are not two sets
+ * of optional fields — they are two different things sharing a table, and the
+ * union is what stops a discovery trigger being created with an agent that will
+ * never run, or a lead trigger with a search nothing will read.
+ */
+const leadStatusTriggerSchema = z.object({
+  kind: z.literal('lead_status'),
+  name: z.string().min(1).max(120),
+  leadStatus: z.nativeEnum(LeadStatus).optional(),
+  agentType: z.enum(AGENT_TYPES as [string, ...string[]]),
+  objectiveTemplate: z.string().min(5).max(2000),
+  cooldownHours: z.number().int().min(1).max(24 * 30).default(24),
+});
+
+/**
+ * A discovery trigger looks for businesses that are not leads yet, so it has no
+ * lead status to filter on and no agent to run — `evaluateDiscoveryTrigger`
+ * enqueues one scan for the whole account instead of one action per lead.
+ *
+ * The search is validated at creation rather than at execution. A trigger whose
+ * search cannot be parsed will not fix itself on retry: the job would run every
+ * cycle, log "unparseable" and end, and the customer would watch an automation
+ * that appears to run and never produces anything.
+ */
+const discoveryTriggerSchema = z.object({
+  kind: z.literal('discovery'),
+  name: z.string().min(1).max(120),
+  /** "query @ location", e.g. "dental clinic @ Riyadh". */
+  search: z
+    .string()
+    .min(3)
+    .max(2000)
+    .refine((value) => parseDiscoverySearch(value) !== null, {
+      message: 'اكتب البحث بالصيغة: استعلام @ مدينة',
+    }),
+  cooldownHours: z.number().int().min(1).max(24 * 30).default(24),
+});
+
+export const createTriggerSchema = z.preprocess(
+  // `kind` used to be optional with a default. A discriminated union cannot
+  // default its discriminator, so the old shape is filled in here and an
+  // existing client that omits the field keeps working.
+  (value) =>
+    value && typeof value === 'object' && !('kind' in value)
+      ? { ...value, kind: 'lead_status' }
+      : value,
+  z.discriminatedUnion('kind', [
+    leadStatusTriggerSchema,
+    discoveryTriggerSchema,
+  ]),
+);
 
 /** Substitutes lead fields into a trigger's objective template. */
 export function renderObjective(
@@ -327,17 +383,22 @@ async function runJob(job: {
  *
  * Called by the worker endpoint or a scheduled invocation. Bounded by `max` so
  * a single call cannot run indefinitely under a serverless timeout.
+ *
+ * `userId` confines the drain to one account, and the session-driven path must
+ * supply it — see `claimNextJob`. The scheduler leaves it undefined on purpose:
+ * driving every account is what it exists for.
  */
 export async function processJobs(
   workerId: string,
   max = 10,
+  userId?: string,
 ): Promise<{ processed: number; succeeded: number; failed: number }> {
   let processed = 0;
   let succeeded = 0;
   let failed = 0;
 
   for (let i = 0; i < max; i += 1) {
-    const job = await claimNextJob(workerId);
+    const job = await claimNextJob(workerId, userId);
     if (!job) break;
 
     processed += 1;

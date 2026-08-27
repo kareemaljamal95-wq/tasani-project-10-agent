@@ -91,7 +91,14 @@ async function runCycle(
     }
   }
 
-  const drained = await processJobs(workerId, scope.kind === 'scheduler' ? 25 : 5);
+  // The drain is scoped to the caller's own account on the session path. A
+  // signed-in operator poking the worker must not execute work belonging to
+  // someone else — it would spend their model budget and file approvals under
+  // their name.
+  const drained =
+    scope.kind === 'scheduler'
+      ? await processJobs(workerId, 25)
+      : await processJobs(workerId, 5, scope.userId);
 
   logger.info('Automation cycle complete', { enqueued, ...drained });
 
