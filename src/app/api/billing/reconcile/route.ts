@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 import { reconcileCheckout } from '@/lib/billing/checkout';
+import { PaymentDeclinedError } from '@/lib/billing/provider';
 import { logger } from '@/lib/logger';
 
 export const dynamic = 'force-dynamic';
@@ -39,6 +40,25 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ outcome });
   } catch (error) {
+    // A decline is a definite answer from the provider, so it gets its own
+    // status and its own wording. Telling someone whose card was refused to
+    // "wait for confirmation" sends them back to a card that will refuse again.
+    if (error instanceof PaymentDeclinedError) {
+      logger.info('Checkout declined by the provider', {
+        userId: session.userId,
+        issue: error.issue,
+      });
+
+      return NextResponse.json(
+        {
+          error:
+            'رُفضت وسيلة الدفع من المزوّد. جرّب بطاقة أو حسابًا آخر — لم يُخصم أي مبلغ.',
+          declined: true,
+        },
+        { status: 402 },
+      );
+    }
+
     logger.error('Checkout reconciliation failed', {
       userId: session.userId,
       error: error instanceof Error ? error.message : String(error),

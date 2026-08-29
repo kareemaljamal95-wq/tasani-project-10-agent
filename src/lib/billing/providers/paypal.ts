@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { env } from '@/lib/env';
 import { logger } from '@/lib/logger';
 import {
+  PaymentDeclinedError,
   ProviderCapabilityError,
   type BillingProvider,
   type CreateCheckoutInput,
@@ -30,6 +31,19 @@ const API_BASE = {
   sandbox: 'https://api-m.sandbox.paypal.com',
   production: 'https://api-m.paypal.com',
 } as const;
+
+/**
+ * PayPal issue codes that mean "the money was refused", as opposed to "we could
+ * not ask". Only these turn a failed capture into a decline the customer must
+ * act on; anything else stays an outage they should retry.
+ */
+const DECLINE_ISSUES = [
+  'INSTRUMENT_DECLINED',
+  'TRANSACTION_REFUSED',
+  'PAYER_CANNOT_PAY',
+  'PAYER_ACCOUNT_RESTRICTED',
+  'PAYER_ACCOUNT_LOCKED_OR_CLOSED',
+] as const;
 
 interface TokenCache {
   token: string;
@@ -176,6 +190,37 @@ export class PayPalProvider implements BillingProvider {
 
     if (!result.webhooks) {
       detail.push('PAYPAL_WEBHOOK_ID not set — webhooks cannot be verified.');
+      return result;
+    }
+
+    // A webhook id that belongs to a *different* app is the worst shape this
+    // misconfiguration takes, because nothing about it looks wrong: the id is
+    // present, the credentials work, health is green — and every delivery is
+    // rejected 401 because verification is performed with these credentials
+    // against that id. It cost a live switch to find by hand. Asking PayPal
+    // whether the id exists under these credentials answers it in one call.
+    try {
+      const response = await this.request(
+        `/v1/notifications/webhooks/${encodeURIComponent(config.PAYPAL_WEBHOOK_ID!)}`,
+        { method: 'GET' },
+      );
+
+      if (response.ok) {
+        detail.push('Webhook id belongs to this app.');
+      } else if (response.status === 404) {
+        result.webhooks = false;
+        detail.push(
+          'PAYPAL_WEBHOOK_ID does not exist under these credentials — the id and the client id belong to different apps, so every delivery will be rejected.',
+        );
+      } else {
+        detail.push(`Webhook lookup returned HTTP ${response.status}.`);
+      }
+    } catch (error) {
+      // A probe failure is not evidence the id is wrong, so the capability is
+      // left as it was rather than reported false on a network hiccup.
+      detail.push(
+        `Webhook lookup failed: ${error instanceof Error ? error.message : 'unknown error'}`,
+      );
     }
 
     return result;
@@ -399,12 +444,24 @@ export class PayPalProvider implements BillingProvider {
       return;
     }
 
-    // The body can name the payer's reason for decline, so only the status is
-    // recorded; the detail stays in the thrown message for the caller's log.
+    // The body can name the payer's reason for decline, so only the status and
+    // the issue code are recorded; the rest stays out of the log.
+    const issue = DECLINE_ISSUES.find((code) => detail.includes(code));
+
     logger.error('PayPal order capture failed', {
       providerOrderId,
       status: response.status,
+      issue,
     });
+
+    // A decline is an answer, not an outage. Separating the two is what keeps
+    // the customer from being told to wait and retry a card that refused.
+    if (issue) {
+      throw new PaymentDeclinedError(
+        'The payment method was declined by the provider.',
+        issue,
+      );
+    }
 
     throw new ProviderCapabilityError(
       'restApi',

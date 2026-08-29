@@ -646,6 +646,28 @@ describe('webhooks', () => {
     expect(capturedOrders).toHaveLength(0);
   });
 
+  it('grants nothing when the provider declines the capture', async () => {
+    const user = await createTestUser();
+    const checkout = await startCheckout({
+      userId: user.id,
+      planCode: 'growth',
+      interval: 'MONTH',
+      idempotencyKey: 'reconcile-declined',
+    });
+
+    // The buyer approved, so the order reaches the capture call — and the
+    // capture is refused. This is the one path that differs between sandbox,
+    // where everything succeeds, and production. It must end in no access.
+    orderStatus = 'APPROVED';
+    captureFails = true;
+
+    await expect(
+      reconcileCheckout(checkout.checkoutId, user.id),
+    ).rejects.toThrow();
+
+    expect(await prisma.subscription.count({ where: { userId: user.id } })).toBe(0);
+  });
+
   it('will not reconcile another account\'s checkout', async () => {
     const owner = await createTestUser();
     const stranger = await createTestUser();

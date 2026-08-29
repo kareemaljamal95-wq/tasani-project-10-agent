@@ -86,6 +86,26 @@ export interface BillingProvider {
   cancelSubscription(providerSubscriptionId: string, reason: string): Promise<void>;
 }
 
+/**
+ * Thrown when the provider refused the money itself.
+ *
+ * Distinct from `ProviderCapabilityError` because the two need opposite
+ * answers: a capability failure means *we* could not ask, and the customer
+ * should wait and retry; a decline means the provider answered clearly and the
+ * customer must change payment method. Reporting a decline as "could not
+ * confirm the payment" sends someone to retry a card that will refuse again.
+ */
+export class PaymentDeclinedError extends Error {
+  constructor(
+    message: string,
+    /** The provider's own issue code, when it named one. */
+    readonly issue?: string,
+  ) {
+    super(message);
+    this.name = 'PaymentDeclinedError';
+  }
+}
+
 /** Thrown when an operation needs a provider capability this account lacks. */
 export class ProviderCapabilityError extends Error {
   constructor(
