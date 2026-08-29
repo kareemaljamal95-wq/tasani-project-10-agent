@@ -209,6 +209,16 @@ Secrets live in the `app-secrets` group. **Write them by reading the group
 first, merging, and sending it whole.** A PATCH replaces `secrets.variables`
 rather than merging into it; sending a single key once wiped five others.
 
+**A variable defined on the service beats the same key inherited from the
+group, silently.** Editing `app-secrets` then has no effect on that one key,
+and nothing in the running app can tell: the value is present, it is simply the
+old one. Northflank marks the shadowed row struck through on the service's
+Environment tab, with a tooltip reading "Overridden: Another variable with the
+same key is defined in this service rather than inherited" — that greyed-out
+row is the only evidence. Check it before concluding a secret edit did not
+apply. Env is read once at boot (`env()` caches), so a restart is required
+either way; a restart alone will not fix a shadowed key.
+
 Automation runs as the `automation-tick` cron job, every five minutes, calling
 `/api/automation/run` with `x-worker-key`. It uses a small `curlimages/curl`
 image rather than the application image — the tick is one HTTP call, so it needs
