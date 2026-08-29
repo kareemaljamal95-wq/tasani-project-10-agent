@@ -83,6 +83,28 @@ describe('parsing a pasted listing', () => {
     }
   });
 
+  it('does not turn a rating line into a service', () => {
+    // Found on a real generated page: "4.3 ★ (87)" was read as list item "4."
+    // followed by the service "3 ★ (87)". The rating parsed correctly at the
+    // same time, so the page showed a right rating and an invented service —
+    // the exact failure this parser exists to prevent, on a file a customer
+    // would have been handed.
+    const p = parseBusiness({
+      raw: 'ورشة النخبة\n4.3 ★ (87)\nورشة سيارات\n- تغيير زيت 120 ر.س',
+    });
+
+    expect(p.rating).toBe(4.3);
+    expect(p.ratingCount).toBe(87);
+    expect(p.services).toHaveLength(1);
+    expect(p.services[0].name).toBe('تغيير زيت');
+  });
+
+  it('still reads a genuine numbered list', () => {
+    const p = parseBusiness({ raw: 'ورشة\nورشة سيارات\n1. تغيير زيت\n2) فحص شامل' });
+
+    expect(p.services.map((s) => s.name)).toEqual(['تغيير زيت', 'فحص شامل']);
+  });
+
   it('refuses empty input instead of producing an empty site', () => {
     expect(() => parseBusiness({ raw: '   \n  \n' })).toThrow(EmptySourceError);
   });

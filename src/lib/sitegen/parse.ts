@@ -125,11 +125,20 @@ function parseServices(lines: string[]): Service[] {
   const services: Service[] = [];
 
   for (const line of lines) {
-    const bullet = line.match(/^(?:[-*•·—]|\d+[.)])\s*(.+)$/u);
+    // The numbered form requires whitespace after its marker, and that is
+    // load-bearing rather than cosmetic: without it `4.` in a rating line like
+    // "4.3 ★ (87)" reads as a list marker, and "3 ★ (87)" is published as a
+    // service the source never mentioned — an invented service on a page
+    // delivered to someone's customer.
+    const bullet = line.match(/^(?:[-*•·—]\s*|\d+[.)]\s+)(.+)$/u);
     if (!bullet) continue;
 
     const body = bullet[1].trim();
     if (body.length < 2 || body.length > 120) continue;
+
+    // No service is named with a rating star. A bulleted rating line is still
+    // a rating, and belongs to the rating field or to nothing.
+    if (body.includes('★')) continue;
 
     const priceMatch = westernDigits(body).match(PRICE);
     const price = priceMatch ? priceMatch[0].trim() : undefined;
