@@ -219,6 +219,13 @@ row is the only evidence. Check it before concluding a secret edit did not
 apply. Env is read once at boot (`env()` caches), so a restart is required
 either way; a restart alone will not fix a shadowed key.
 
+Deleting the duplicate from the service is the fix. When that is not yours to
+delete — group write access, no service write access — set
+`PAYPAL_WEBHOOK_ID_OVERRIDE` in the group instead. It wins over
+`PAYPAL_WEBHOOK_ID`, and because the service does not define that key there is
+nothing to shadow it. `env()` collapses the two before anything reads them, so
+the capability probe and the signature check cannot end up on different ids.
+
 Automation runs as the `automation-tick` cron job, every five minutes, calling
 `/api/automation/run` with `x-worker-key`. It uses a small `curlimages/curl`
 image rather than the application image — the tick is one HTTP call, so it needs

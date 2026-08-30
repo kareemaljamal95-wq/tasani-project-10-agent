@@ -61,6 +61,38 @@ describe('blank environment variables', () => {
     expect(() => env()).toThrow(/AUTH_SECRET/);
   });
 
+  it('lets the override win over a webhook id the operator cannot edit', async () => {
+    // The situation it was added for: the platform pins PAYPAL_WEBHOOK_ID at a
+    // level the operator has no write access to, so the stale value cannot be
+    // removed. Every call site must see the override, not the pinned value.
+    process.env.PAYPAL_WEBHOOK_ID = 'stale-id-from-the-service';
+    process.env.PAYPAL_WEBHOOK_ID_OVERRIDE = 'the-live-webhook-id';
+
+    const { env } = await import('@/lib/env');
+
+    expect(env().PAYPAL_WEBHOOK_ID).toBe('the-live-webhook-id');
+  });
+
+  it('keeps the plain webhook id when no override is set', async () => {
+    process.env.PAYPAL_WEBHOOK_ID = 'the-only-id';
+    delete process.env.PAYPAL_WEBHOOK_ID_OVERRIDE;
+
+    const { env } = await import('@/lib/env');
+
+    expect(env().PAYPAL_WEBHOOK_ID).toBe('the-only-id');
+  });
+
+  it('ignores a blank override rather than blanking the real id', async () => {
+    // A variable added in a dashboard and left empty must not erase the
+    // working value — the failure mode this file exists for.
+    process.env.PAYPAL_WEBHOOK_ID = 'the-real-id';
+    process.env.PAYPAL_WEBHOOK_ID_OVERRIDE = '   ';
+
+    const { env } = await import('@/lib/env');
+
+    expect(env().PAYPAL_WEBHOOK_ID).toBe('the-real-id');
+  });
+
   it('reads a blank provider secret as absent, not as configured', async () => {
     process.env.PAYPAL_CLIENT_ID = 'id';
     process.env.PAYPAL_CLIENT_SECRET = '';

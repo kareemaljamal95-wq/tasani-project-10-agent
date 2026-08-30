@@ -66,6 +66,20 @@ const envSchema = z.object({
   PAYPAL_ENVIRONMENT: z.enum(['sandbox', 'production']).default('sandbox'),
   /** Required to verify webhooks; without it every webhook is rejected. */
   PAYPAL_WEBHOOK_ID: z.string().min(1).optional(),
+  /**
+   * Wins over `PAYPAL_WEBHOOK_ID` when set.
+   *
+   * Exists for a host that pins a key at a level the operator cannot edit. On
+   * Northflank a variable defined on the *service* silently beats the same key
+   * inherited from the secret group, so an operator with write access to the
+   * group and none to the service cannot correct a stale webhook id — and the
+   * symptom is every delivery rejected 401 while the dashboard looks right.
+   * Setting a key the service does not already define routes around that
+   * without asking anyone to widen a permission.
+   *
+   * Prefer fixing the duplicate. This is for when that is not yours to fix.
+   */
+  PAYPAL_WEBHOOK_ID_OVERRIDE: z.string().min(1).optional(),
 
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(60),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
@@ -125,7 +139,17 @@ export function env(): Env {
     );
   }
 
-  const value = parsed.data;
+  // Collapsed here rather than at the two places that read it. The capability
+  // probe and the signature check live in different files and must agree on
+  // one id; resolving per call site is how they would come to disagree.
+  //
+  // `??` is safe on this one: blanks were dropped before parsing and `.min(1)`
+  // rejected the rest, so the value is either absent or real.
+  const value: Env = {
+    ...parsed.data,
+    PAYPAL_WEBHOOK_ID:
+      parsed.data.PAYPAL_WEBHOOK_ID_OVERRIDE ?? parsed.data.PAYPAL_WEBHOOK_ID,
+  };
 
   if (value.OUTREACH_TRANSPORT === 'smtp' && !value.SMTP_URL) {
     throw new Error('OUTREACH_TRANSPORT=smtp requires SMTP_URL to be set.');
