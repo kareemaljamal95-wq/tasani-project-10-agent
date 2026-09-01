@@ -61,11 +61,15 @@ const envSchema = z.object({
   // --- Billing -------------------------------------------------------------
   // PAYPAL_CLIENT_SECRET must never reach the browser. It is read only in
   // src/lib/billing/providers/paypal.ts, which is server-only.
-  PAYPAL_CLIENT_ID: z.string().min(1).optional(),
-  PAYPAL_CLIENT_SECRET: z.string().min(1).optional(),
+  // Trimmed because these are pasted by hand out of a provider dashboard, and a
+  // copy that catches a trailing space or newline produces an authentication
+  // failure indistinguishable from a wrong key: PayPal answers 401 either way,
+  // and the value looks correct in every dashboard that displays it.
+  PAYPAL_CLIENT_ID: z.string().trim().min(1).optional(),
+  PAYPAL_CLIENT_SECRET: z.string().trim().min(1).optional(),
   PAYPAL_ENVIRONMENT: z.enum(['sandbox', 'production']).default('sandbox'),
   /** Required to verify webhooks; without it every webhook is rejected. */
-  PAYPAL_WEBHOOK_ID: z.string().min(1).optional(),
+  PAYPAL_WEBHOOK_ID: z.string().trim().min(1).optional(),
   /**
    * Wins over `PAYPAL_WEBHOOK_ID` when set.
    *
@@ -79,7 +83,7 @@ const envSchema = z.object({
    *
    * Prefer fixing the duplicate. This is for when that is not yours to fix.
    */
-  PAYPAL_WEBHOOK_ID_OVERRIDE: z.string().min(1).optional(),
+  PAYPAL_WEBHOOK_ID_OVERRIDE: z.string().trim().min(1).optional(),
 
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(60),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),

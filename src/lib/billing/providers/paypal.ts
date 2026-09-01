@@ -95,9 +95,23 @@ export class PayPalProvider implements BillingProvider {
 
     if (!response.ok) {
       // The body can echo the client id; it is not logged.
+      //
+      // A bare "rejected the credentials" is true and useless — it is the same
+      // sentence for four unrelated causes, and working out which one cost a
+      // launch day. 401 has exactly three explanations worth naming, and the
+      // configured environment rules out one of them, so name the rest.
+      const hint =
+        response.status === 401
+          ? env().PAYPAL_ENVIRONMENT === 'production'
+            ? ' Check that the app is a REST app (not NVP/SOAP), that the key was' +
+              ' copied from the Live tab rather than Sandbox, and that it was not' +
+              ' truncated.'
+            : ' Check that the key was copied from the Sandbox tab rather than Live.'
+          : '';
+
       throw new ProviderCapabilityError(
         'restApi',
-        `PayPal rejected the credentials (HTTP ${response.status}).`,
+        `PayPal rejected the credentials (HTTP ${response.status}).${hint}`,
       );
     }
 

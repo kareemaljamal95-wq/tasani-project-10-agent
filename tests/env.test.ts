@@ -93,6 +93,19 @@ describe('blank environment variables', () => {
     expect(env().PAYPAL_WEBHOOK_ID).toBe('the-real-id');
   });
 
+  it('trims a credential pasted with trailing whitespace', async () => {
+    // A secret copied out of a dashboard that catches a newline authenticates
+    // exactly as badly as a wrong one — PayPal answers 401 either way, and the
+    // value looks right everywhere a human can inspect it.
+    process.env.PAYPAL_CLIENT_ID = '  live-client-id\n';
+    process.env.PAYPAL_CLIENT_SECRET = 'live-secret  ';
+
+    const { env } = await import('@/lib/env');
+
+    expect(env().PAYPAL_CLIENT_ID).toBe('live-client-id');
+    expect(env().PAYPAL_CLIENT_SECRET).toBe('live-secret');
+  });
+
   it('reads a blank provider secret as absent, not as configured', async () => {
     process.env.PAYPAL_CLIENT_ID = 'id';
     process.env.PAYPAL_CLIENT_SECRET = '';
