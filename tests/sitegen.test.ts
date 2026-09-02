@@ -1,7 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { prisma } from '@/lib/prisma';
+import { createTestUser, giveTestSubscription, resetDatabase } from './helpers';
 import {
   parseBusiness,
   renderSite,
+  buildSite,
+  shareSite,
+  unshareSite,
+  getSharedSite,
   EmptySourceError,
   THEMES,
   findTheme,
@@ -232,5 +238,102 @@ describe('themes', () => {
       expect(html).toContain('مطعم الواحة الذهبية');
       expect(html).toContain(theme.tokens.brand);
     }
+  });
+});
+
+
+/**
+ * Share links.
+ *
+ * A generated page only becomes a deliverable when the business owner can open
+ * it — they have no account here, so the token *is* the access control. These
+ * assertions are about that token: that it is unguessable, that revoking it
+ * actually revokes, and that it never becomes a way into another account.
+ */
+describe('sharing a site', () => {
+  beforeEach(async () => {
+    await resetDatabase();
+  });
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  async function ownerWithSite() {
+    const user = await createTestUser();
+    await giveTestSubscription(user.id);
+    const site = await buildSite({
+      userId: user.id,
+      actor: user.email,
+      raw: MAPS_PASTE,
+    });
+    return { user, site };
+  }
+
+  it('serves the page to a holder of the link', async () => {
+    const { user, site } = await ownerWithSite();
+
+    const shared = await shareSite(site.id, user.id);
+    expect(shared?.alreadyShared).toBe(false);
+
+    // No user id anywhere in this call — that is the point.
+    const page = await getSharedSite(shared!.token);
+    expect(page?.html).toContain('مطعم الواحة الذهبية');
+  });
+
+  it('returns the same token rather than breaking a link already sent', async () => {
+    const { user, site } = await ownerWithSite();
+
+    const first = await shareSite(site.id, user.id);
+    const second = await shareSite(site.id, user.id);
+
+    expect(second?.token).toBe(first?.token);
+    expect(second?.alreadyShared).toBe(true);
+  });
+
+  it('stops serving the page once the link is withdrawn', async () => {
+    const { user, site } = await ownerWithSite();
+    const shared = await shareSite(site.id, user.id);
+
+    expect(await unshareSite(site.id, user.id)).toBe(true);
+
+    // The whole promise of revocation. A stale link must read as if it never
+    // existed, not merely as forbidden.
+    expect(await getSharedSite(shared!.token)).toBeNull();
+  });
+
+  it('does not let a stranger share a site they do not own', async () => {
+    const { site } = await ownerWithSite();
+    const stranger = await createTestUser();
+
+    expect(await shareSite(site.id, stranger.id)).toBeNull();
+    expect(await unshareSite(site.id, stranger.id)).toBe(false);
+  });
+
+  it('treats an empty or unknown token as not found', async () => {
+    await ownerWithSite();
+
+    expect(await getSharedSite('')).toBeNull();
+    expect(await getSharedSite('not-a-real-token')).toBeNull();
+  });
+
+  it('issues a token long enough not to be guessed', async () => {
+    const { user, site } = await ownerWithSite();
+    const shared = await shareSite(site.id, user.id);
+
+    // 24 random bytes in base64url. The token is the only credential guarding
+    // the page, so its length is a security property, not a detail.
+    expect(shared!.token.length).toBeGreaterThanOrEqual(32);
+    expect(shared!.token).toMatch(/^[A-Za-z0-9_-]+$/);
+  });
+
+  it('remembers that a page was once public after revoking', async () => {
+    const { user, site } = await ownerWithSite();
+    await shareSite(site.id, user.id);
+    await unshareSite(site.id, user.id);
+
+    const row = await prisma.generatedSite.findUnique({ where: { id: site.id } });
+    expect(row?.shareToken).toBeNull();
+    expect(row?.sharedAt).toBeTruthy();
   });
 });

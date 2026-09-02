@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Globe, Download, Trash2, Eye, Sparkles } from 'lucide-react';
+import { Globe, Download, Trash2, Eye, Sparkles, Link2, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 /**
@@ -66,6 +66,10 @@ export function SitesBoard({
   const [themeId, setThemeId] = useState(themes[0]?.id ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Share links are held per site rather than on the row so revoking one does
+  // not require refetching the list.
+  const [links, setLinks] = useState<Record<string, string>>({});
+  const [copied, setCopied] = useState<string | null>(null);
 
   async function build(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -102,6 +106,66 @@ export function SitesBoard({
       router.refresh();
     } catch {
       setError('تعذّر الاتصال بالخادم.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Publishes the page at a link the business owner can open.
+   *
+   * This is what turns a generated file into something you can send: the
+   * prospect has no account here, so a private preview shows them nothing.
+   */
+  async function share(site: SiteRow) {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/sites/${site.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ share: true }),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        setError(data.error ?? 'تعذّر إنشاء الرابط.');
+        return;
+      }
+
+      setLinks((prev) => ({ ...prev, [site.id]: data.url }));
+
+      // Best effort: the clipboard is unavailable over plain http and in some
+      // embedded browsers, and the link is shown either way.
+      try {
+        await navigator.clipboard.writeText(data.url);
+        setCopied(site.id);
+        setTimeout(() => setCopied(null), 2000);
+      } catch {
+        /* the link is on screen; copying was a convenience */
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function revoke(site: SiteRow) {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/sites/${site.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ share: false }),
+      });
+      if (res.ok) {
+        setLinks((prev) => {
+          const next = { ...prev };
+          delete next[site.id];
+          return next;
+        });
+      }
     } finally {
       setBusy(false);
     }
@@ -236,6 +300,18 @@ export function SitesBoard({
                   >
                     <Eye className="h-4 w-4" />
                   </a>
+                  <button
+                    onClick={() => share(site)}
+                    disabled={busy}
+                    title="رابط للعميل"
+                    className="rounded-lg p-2 text-white/50 hover:bg-violet-500/10 hover:text-violet-300"
+                  >
+                    {copied === site.id ? (
+                      <Check className="h-4 w-4 text-green-400" />
+                    ) : (
+                      <Link2 className="h-4 w-4" />
+                    )}
+                  </button>
                   <a
                     href={`/api/sites/${site.id}?download=1`}
                     title="تنزيل الملف"
@@ -253,6 +329,26 @@ export function SitesBoard({
                   </button>
                 </div>
               </div>
+
+              {links[site.id] && (
+                <div className="mt-3 rounded-xl border border-violet-500/25 bg-violet-500/10 p-3">
+                  <p className="mb-2 text-xs text-violet-200/80">
+                    رابط جاهز لإرساله لصاحب النشاط — يفتحه بلا حساب:
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <code dir="ltr" className="min-w-0 flex-1 truncate rounded-lg bg-black/30 px-2 py-1 text-[11px] text-white/70">
+                      {links[site.id]}
+                    </code>
+                    <button
+                      onClick={() => revoke(site)}
+                      disabled={busy}
+                      className="rounded-lg border border-white/10 px-2 py-1 text-[11px] text-white/50 hover:text-white"
+                    >
+                      إلغاء الرابط
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {site.missing.length > 0 && (
                 <div className="mt-3 border-t border-white/5 pt-3">

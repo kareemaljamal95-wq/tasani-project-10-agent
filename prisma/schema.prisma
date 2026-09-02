@@ -855,6 +855,19 @@ model GeneratedSite {
   /// The rendered, self-contained page.
   html String
 
+  /// Unguessable token that serves this page to anyone holding the link.
+  ///
+  /// A generated site is worthless as a pitch while only its owner can open
+  /// it: the prospect has to *see* their finished page. Null until the owner
+  /// shares it and null again the moment they revoke, so sharing stays a
+  /// deliberate act and stays reversible. Unique so the lookup is a single
+  /// indexed read and a guessed token is simply not found.
+  shareToken String? @unique
+
+  /// When the link was created. Kept after revocation clears the token so the
+  /// owner can still see that a page was once public.
+  sharedAt DateTime?
+
   @@index([userId, createdAt])
   @@index([userId, leadId])
 }

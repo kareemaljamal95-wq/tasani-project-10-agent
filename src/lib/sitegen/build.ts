@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { logger } from '@/lib/logger';
@@ -124,6 +125,74 @@ export async function deleteSite(id: string, userId: string): Promise<boolean> {
     where: { id, userId },
   });
   return result.count > 0;
+}
+
+/**
+ * Turns a stored site into a link anyone can open.
+ *
+ * A generated page is worthless as a pitch while only its owner can see it —
+ * the prospect has to open their own finished site, on their own phone, before
+ * any of this means anything to them. So sharing is a deliberate act with an
+ * unguessable token rather than a permanently public id.
+ *
+ * Idempotent: re-sharing an already shared site returns the same token, so an
+ * owner who sends the link twice does not invalidate the copy already sitting
+ * in a prospect's messages.
+ */
+export async function shareSite(
+  id: string,
+  userId: string,
+): Promise<{ token: string; alreadyShared: boolean } | null> {
+  const site = await getOwnedSite(id, userId);
+  if (!site) return null;
+
+  if (site.shareToken) {
+    return { token: site.shareToken, alreadyShared: true };
+  }
+
+  // 192 bits from a CSPRNG. The token is the whole access control for this
+  // page, so it has to be unguessable rather than merely unique.
+  const token = randomBytes(24).toString('base64url');
+
+  await prisma.generatedSite.updateMany({
+    where: { id, userId },
+    data: { shareToken: token, sharedAt: new Date() },
+  });
+
+  logger.info('Site shared', { userId, siteId: id });
+
+  return { token, alreadyShared: false };
+}
+
+/**
+ * Withdraws a share link.
+ *
+ * `sharedAt` is deliberately kept: the owner should still be able to see that
+ * a page was once public, which a cleared timestamp would hide.
+ */
+export async function unshareSite(id: string, userId: string): Promise<boolean> {
+  const result = await prisma.generatedSite.updateMany({
+    where: { id, userId },
+    data: { shareToken: null },
+  });
+
+  return result.count > 0;
+}
+
+/**
+ * Serves a shared page to whoever holds the link.
+ *
+ * The only read in this module not scoped by `userId`, because a prospect has
+ * no account — which is the entire point. It is safe for one reason: the token
+ * is the credential, a revoked token is null and `null` never matches here.
+ */
+export function getSharedSite(token: string) {
+  if (!token) return null;
+
+  return prisma.generatedSite.findUnique({
+    where: { shareToken: token },
+    select: { id: true, name: true, html: true },
+  });
 }
 
 /**
