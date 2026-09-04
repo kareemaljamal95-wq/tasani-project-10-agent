@@ -42,3 +42,6 @@ next-env.d.ts
 
 # Test/build scratch
 /coverage
+services/factory/__pycache__/
+services/factory/**/__pycache__/
+*.pyc
