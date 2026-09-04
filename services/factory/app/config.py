@@ -46,6 +46,13 @@ class Settings(BaseSettings):
     # it never falls back to "send anywhere".
     DELIVERY_WEBHOOK_URL: str = ""
 
+    # The execution sandbox. Both are required together; one without the other
+    # is a half-configuration that would fail on the first run rather than at
+    # boot, so `sandbox_configured` treats it as absent.
+    SANDBOX_URL: str = ""
+    SANDBOX_SECRET: str = ""
+    SANDBOX_TIMEOUT_SECONDS: int = Field(default=120, ge=10, le=900)
+
     OPENAI_API_KEY: str = ""
     ANTHROPIC_API_KEY: str = ""
 
@@ -66,6 +73,7 @@ class Settings(BaseSettings):
         "PAYPAL_CLIENT_ID",
         "PAYPAL_CLIENT_SECRET",
         "PAYPAL_WEBHOOK_ID",
+        "SANDBOX_SECRET",
         "OPENAI_API_KEY",
         "ANTHROPIC_API_KEY",
         mode="before",
@@ -81,6 +89,10 @@ class Settings(BaseSettings):
             if self.PAYPAL_ENVIRONMENT == "production"
             else "https://api-m.sandbox.paypal.com"
         )
+
+    @property
+    def sandbox_configured(self) -> bool:
+        return bool(self.SANDBOX_URL and self.SANDBOX_SECRET)
 
     @property
     def has_model_provider(self) -> bool:

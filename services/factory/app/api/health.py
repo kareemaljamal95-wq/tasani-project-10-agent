@@ -35,6 +35,9 @@ async def health() -> dict:
             "database": database,
             "ingest_gate": bool(cfg.INGEST_WEBHOOK_SECRET),
             "model_provider": cfg.has_model_provider,
+            # Not cosmetic: the QA gate is decided by a real exit code, so
+            # without this the line reaches review and holds every ticket.
+            "execution": cfg.sandbox_configured,
             "payments": cfg.can_receive_payment,
             "payments_environment": cfg.PAYPAL_ENVIRONMENT,
             "delivery_webhook": cfg.can_deliver,

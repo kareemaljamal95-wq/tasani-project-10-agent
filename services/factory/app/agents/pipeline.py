@@ -21,6 +21,7 @@ import logging
 from typing import Any
 
 from ..config import settings
+from .. import sandbox
 from ..db import Ticket, TicketState
 from .llm import ModelOutputInvalid, ModelUnavailable, complete
 from .roster import Role, STAGES, roles_in
@@ -104,6 +105,7 @@ async def run_line(ticket: Ticket) -> dict[str, Any]:
         if stage == 0:
             _check_intake(artifacts, ticket)
         if stage == 3:
+            artifacts["EXECUTION"] = await _execute(artifacts)
             _check_review(artifacts)
 
     _check_package(artifacts)
@@ -131,6 +133,63 @@ def _check_intake(artifacts: dict[str, Any], ticket: Ticket) -> None:
         )
 
 
+def _collect_files(artifacts: dict[str, Any]) -> dict[str, str]:
+    """Everything written this run: the implementation plus QA's tests."""
+    files: dict[str, str] = {}
+
+    for role in ("DEVELOPER", "QA"):
+        block = artifacts.get(role) or {}
+        entries = block.get("files") or block.get("tests") or []
+        if not isinstance(entries, list):
+            continue
+        for f in entries:
+            if isinstance(f, dict) and isinstance(f.get("path"), str) and isinstance(
+                f.get("content"), str
+            ):
+                files[f["path"]] = f["content"]
+
+    return files
+
+
+async def _execute(artifacts: dict[str, Any]) -> dict[str, Any]:
+    """Run the tests for real.
+
+    This is what separates the line from a very confident conversation. QA
+    reporting `pass: true` is a model's opinion about code it just read; an
+    exit code is a fact. The opinion is kept for its detail, and the fact
+    decides the gate.
+    """
+    files = _collect_files(artifacts)
+
+    if not files:
+        return {"ran": False, "reason": "the line produced no files to execute"}
+
+    has_tests = any("test" in path.lower() for path in files)
+
+    try:
+        result = await sandbox.run(
+            files,
+            "pytest" if has_tests else "python",
+            ["."] if has_tests else ["-c", "import sys; sys.exit(0)"],
+        )
+    except sandbox.SandboxUnavailable as exc:
+        # Reported as "did not run", never as a failed test. "The tests failed"
+        # and "we never ran the tests" are different facts, and collapsing them
+        # is how unverified code ships as verified.
+        return {"ran": False, "reason": str(exc)}
+
+    return {
+        "ran": True,
+        "ok": result.ok,
+        "exit_code": result.exit_code,
+        "timed_out": result.timed_out,
+        "duration_ms": result.duration_ms,
+        "stdout": result.stdout[-4_000:],
+        "stderr": result.stderr[-4_000:],
+        "tests_present": has_tests,
+    }
+
+
 def _check_review(artifacts: dict[str, Any]) -> None:
     for gate in ("SECURITY", "QA"):
         result = artifacts.get(gate) or {}
@@ -140,6 +199,23 @@ def _check_review(artifacts: dict[str, Any]) -> None:
         if result.get("pass") is not True:
             reason = result.get("error") or f"{gate} did not pass the work."
             raise LineHalted(TicketState.FAILED_REVIEW, str(reason))
+
+    execution = artifacts.get("EXECUTION") or {}
+
+    # A model that says its code passes, over code that was never run, is
+    # exactly the claim this line exists to stop accepting.
+    if not execution.get("ran"):
+        raise LineHalted(
+            TicketState.HELD,
+            f"Code was not executed ({execution.get('reason', 'unknown')}); held rather than passed.",
+        )
+
+    if not execution.get("ok"):
+        detail = (execution.get("stderr") or execution.get("stdout") or "").strip()
+        raise LineHalted(
+            TicketState.FAILED_REVIEW,
+            f"Execution failed (exit {execution.get('exit_code')}). {detail[-300:]}",
+        )
 
 
 def _check_package(artifacts: dict[str, Any]) -> None:
