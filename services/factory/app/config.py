@@ -82,6 +82,21 @@ class Settings(BaseSettings):
     def _trim(cls, v: str | None) -> str | None:
         return v.strip() if isinstance(v, str) else v
 
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
+    def _async_driver(cls, v: str | None) -> str | None:
+        """Accept the connection string a Postgres host actually hands out.
+
+        Northflank's addon gives `postgresql://…`, which `create_async_engine`
+        rejects outright. asyncpg is the only async driver in this service's
+        dependencies, so there is exactly one correct rewrite and no guess
+        involved — refusing the paste would fail every first deploy for a
+        reason no error message explains.
+        """
+        if isinstance(v, str) and v.startswith(("postgresql://", "postgres://")):
+            return "postgresql+asyncpg://" + v.split("://", 1)[1]
+        return v
+
     @property
     def paypal_base_url(self) -> str:
         return (
