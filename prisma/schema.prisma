@@ -83,6 +83,10 @@ enum AuditType {
   auth_succeeded
   rate_limited
   discovery_scan
+  /// An agent carried out an internal action itself.
+  agent_action
+  /// An agent asked for an action its role does not permit.
+  agent_action_refused
 }
 
 /// Human-approval gate. No outbound message may be sent without an APPROVED

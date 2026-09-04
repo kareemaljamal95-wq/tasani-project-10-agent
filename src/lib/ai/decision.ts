@@ -4,6 +4,7 @@ import { generateAIResponse } from './provider';
 import { getAgentDefault } from './agent-defaults';
 import type { PolicyResult } from './policies';
 import { gatherEvidence } from './evidence';
+import { agentActionSchema, permittedActions } from './actions';
 import { logger } from '@/lib/logger';
 
 /**
@@ -23,6 +24,13 @@ export const agentDecisionSchema = z.object({
   rationaleSummary: z.string().min(1).max(5000),
   expectedBusinessImpact: z.string().min(1).max(5000),
   suggestedNextStep: z.string().min(1).max(2000),
+  /**
+   * The concrete action the agent wants performed, if any.
+   *
+   * Optional so a model that omits it, or an older prompt, still parses — the
+   * absence simply means advice, which is what every agent produced before.
+   */
+  action: agentActionSchema.optional(),
 });
 
 export type AgentDecisionOutput = z.infer<typeof agentDecisionSchema> & {
@@ -50,6 +58,29 @@ Respond with a single JSON object and nothing else — no prose, no markdown fen
 }
 Set requiresHumanApproval to true for anything financial, legal, contractual, or visible outside the company.
 `.trim();
+
+/**
+ * The action half of the contract, appended only for agents that have one.
+ *
+ * An agent with no permitted action is never told actions exist, so it cannot
+ * propose one and be refused.
+ */
+function actionContract(agentId: string): string {
+  const allowed = permittedActions(agentId);
+  if (allowed.length === 0) return '';
+
+  return [
+    '',
+    'You may also carry out one action yourself by adding an "action" field.',
+    `Actions permitted for you: ${allowed.join(', ')}.`,
+    'Shapes:',
+    '  {"kind":"build_site","raw":"the listing text","leadId":"optional lead id"}',
+    '  {"kind":"set_lead_status","leadId":"id","status":"NEW|CONTACTED|QUALIFIED|PROPOSAL|WON|LOST"}',
+    '  {"kind":"discovery_scan","query":"business type","location":"city"}',
+    'Omit the field, or use {"kind":"none"}, when no action is warranted — that is the normal case.',
+    'Use an id only if it appears in accountData. Never invent one.',
+  ].join('\n');
+}
 
 /** Strips a ```json fence when a model adds one despite instructions. */
 function extractJson(text: string): string {
@@ -80,7 +111,7 @@ export async function runAgentDecision(
     throw new AgentDecisionError(`No configuration for agent ${input.agentId}.`);
   }
 
-  const systemPrompt = `${config?.systemPrompt ?? fallback!.systemPrompt}\n\n${OUTPUT_CONTRACT}`;
+  const systemPrompt = `${config?.systemPrompt ?? fallback!.systemPrompt}\n\n${OUTPUT_CONTRACT}${actionContract(input.agentId)}`;
   const model = config?.model ?? fallback!.model;
   const temperature = config?.temperature ?? fallback!.temperature;
 

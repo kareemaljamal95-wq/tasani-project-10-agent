@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma';
 import { evaluatePolicy } from '@/lib/ai/policies';
+import { performAgentAction, type ActionResult } from '@/lib/ai/actions';
 import { runAgentDecision } from '@/lib/ai/decision';
 import { createApproval } from '@/lib/approvals';
 import { recordAudit } from '@/lib/audit';
@@ -28,7 +29,7 @@ export class ProviderUnavailableError extends Error {
 export type ExecutionResult =
   | { status: 'blocked'; reason: string }
   | { status: 'approval_required'; approvalId: string; policyReason: string; decision: unknown }
-  | { status: 'autonomous'; decision: unknown };
+  | { status: 'autonomous'; decision: unknown; action?: ActionResult };
 
 export interface ExecuteAgentInput {
   userId: string;
@@ -142,6 +143,22 @@ export async function executeAgent(
     actor: input.actor,
   });
 
+  // The action runs only when the decision does not need a human.
+  //
+  // Every action available to an agent is internal — a stored file, a status
+  // column, imported rows — so this does not widen what an agent may do. But
+  // an agent that judged its own proposal as needing approval must not then
+  // act on it anyway, and this is the one line that guarantees that ordering.
+  const action =
+    !requiresApproval && decision.action
+      ? await performAgentAction({
+          userId: input.userId,
+          agentId: input.agentId,
+          actor: input.actor,
+          action: decision.action,
+        })
+      : undefined;
+
   if (requiresApproval) {
     const approval = await createApproval({
       userId: input.userId,
@@ -189,11 +206,16 @@ export async function executeAgent(
       userId: input.userId,
       leadId: input.leadId,
       type: 'agent_run',
-      message: `نفّذ ${input.agentId} إجراءً ضمن الصلاحية الممنوحة.`,
-      data: { riskLevel: decision.riskLevel },
+      // The summary of a performed action is more use to the owner than the
+      // generic sentence, so it wins when there is one.
+      message:
+        action?.performed === true
+          ? `${input.agentId}: ${action.summary}`
+          : `نفّذ ${input.agentId} إجراءً ضمن الصلاحية الممنوحة.`,
+      data: { riskLevel: decision.riskLevel, action },
       actor: input.actor,
     });
   }
 
-  return { status: 'autonomous', decision };
+  return { status: 'autonomous', decision, action };
 }
