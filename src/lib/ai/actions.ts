@@ -70,6 +70,18 @@ export type AgentActionKind = AgentAction['kind'];
  * capability by omission — the safe direction to fail in.
  */
 const ALLOWED: Record<string, AgentActionKind[]> = {
+  // The production line. Only the roles that produce an artefact may write
+  // one, and DELIVERY is absent on purpose: handover leaves the company, so it
+  // stays a PENDING approval the owner releases.
+  DEVELOPER: ['build_site'],
+  ARCHITECT: ['build_site'],
+  DOCS: ['build_site'],
+  INTAKE: ['set_lead_status'],
+  QA: ['set_lead_status'],
+  SECURITY: ['set_lead_status'],
+
+  // Retired consultancy roles, kept while accounts provisioned before the
+  // pivot still hold AgentConfig rows naming them.
   CONTENT: ['build_site'],
   MARKETING: ['build_site'],
   SALES: ['set_lead_status'],

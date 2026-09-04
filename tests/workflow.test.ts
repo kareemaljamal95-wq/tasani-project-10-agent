@@ -193,14 +193,14 @@ describe('automation', () => {
     const first = await enqueueJob({
       userId: user.id,
       kind: 'lead_agent_action',
-      payload: { leadId: 'x', agentType: 'SALES', objective: 'hello there' },
+      payload: { leadId: 'x', agentType: 'DEVELOPER', objective: 'hello there' },
       idempotencyKey: 'same-key',
     });
 
     const second = await enqueueJob({
       userId: user.id,
       kind: 'lead_agent_action',
-      payload: { leadId: 'x', agentType: 'SALES', objective: 'hello there' },
+      payload: { leadId: 'x', agentType: 'DEVELOPER', objective: 'hello there' },
       idempotencyKey: 'same-key',
     });
 
@@ -222,7 +222,7 @@ describe('automation', () => {
       await enqueueJob({
         userId: owner.id,
         kind: 'lead_agent_action',
-        payload: { leadId: 'gone', agentType: 'SALES', objective: 'hello there' },
+        payload: { leadId: 'gone', agentType: 'DEVELOPER', objective: 'hello there' },
       });
     }
 
@@ -252,7 +252,7 @@ describe('automation', () => {
         name: 'Contact new leads',
         kind: 'lead_status',
         leadStatus: 'NEW',
-        agentType: 'SALES',
+        agentType: 'DEVELOPER',
         objectiveTemplate: 'Write a first outreach email to {{company}}',
         enabled: true,
       },
@@ -360,7 +360,7 @@ describe('automation', () => {
         name: 'Contact new leads',
         kind: 'lead_status',
         leadStatus: 'NEW',
-        agentType: 'SALES',
+        agentType: 'DEVELOPER',
         objectiveTemplate: 'Write a first outreach email to {{company}}',
         enabled: true,
       },
@@ -383,7 +383,7 @@ describe('automation', () => {
         userId: user.id,
         name: 'Disabled',
         kind: 'lead_status',
-        agentType: 'SALES',
+        agentType: 'DEVELOPER',
         objectiveTemplate: 'Write to {{company}}',
         enabled: false,
       },
@@ -426,7 +426,7 @@ describe('creating a trigger', () => {
   it('still accepts the old body that omits kind', () => {
     const parsed = createTriggerSchema.parse({
       name: 'Follow up',
-      agentType: 'SALES',
+      agentType: 'DEVELOPER',
       objectiveTemplate: 'Write to {{company}}',
     });
 

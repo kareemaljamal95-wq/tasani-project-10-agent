@@ -184,9 +184,9 @@ describe('lead persistence', () => {
   });
 });
 
-describe('STRATEGIST agent', () => {
+describe('a production-line agent', () => {
   it('is provisioned in the default workforce', () => {
-    expect(AGENT_DEFAULTS.some((a) => a.type === 'STRATEGIST')).toBe(true);
+    expect(AGENT_DEFAULTS.some((a) => a.type === 'QA')).toBe(true);
   });
 
   it('is not blocked as an unknown agent', async () => {
@@ -196,7 +196,7 @@ describe('STRATEGIST agent', () => {
 
     const result = await evaluatePolicy({
       userId: user.id,
-      agentId: 'STRATEGIST',
+      agentId: 'QA',
       objective: 'Recommend which service to lead with for this prospect',
     });
 
@@ -209,7 +209,7 @@ describe('STRATEGIST agent', () => {
 
     const result = await evaluatePolicy({
       userId: user.id,
-      agentId: 'STRATEGIST',
+      agentId: 'QA',
       objective: 'transfer ownership of the company to another party',
     });
 

@@ -74,7 +74,7 @@ describe('settings persistence', () => {
     await provisionAgents(other.id);
 
     const agent = await prisma.agentConfig.findFirstOrThrow({
-      where: { userId: user.id, type: 'SALES' },
+      where: { userId: user.id, type: 'DEVELOPER' },
     });
 
     await prisma.agentConfig.updateMany({
@@ -89,7 +89,7 @@ describe('settings persistence', () => {
 
     // The other account's identically-typed agent is unaffected.
     const otherAgent = await prisma.agentConfig.findFirstOrThrow({
-      where: { userId: other.id, type: 'SALES' },
+      where: { userId: other.id, type: 'DEVELOPER' },
     });
     expect(otherAgent.isEnabled).toBe(true);
   });
@@ -100,7 +100,7 @@ describe('settings persistence', () => {
     await provisionAgents(user.id);
 
     const agent = await prisma.agentConfig.findFirstOrThrow({
-      where: { userId: user.id, type: 'SALES' },
+      where: { userId: user.id, type: 'DEVELOPER' },
     });
 
     const result = await prisma.agentConfig.updateMany({

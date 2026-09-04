@@ -28,16 +28,18 @@ describe('gathering evidence', () => {
 
     const e = (await gatherEvidence('ANALYST', user.id)) as {
       accountData: {
-        opportunityGrades: Record<string, number>;
-        leadsByStatus: Record<string, number>;
+        ticketsByStatus: Record<string, number>;
+        deliverables: { total: number };
+        automation: { jobs: Record<string, number> };
       };
     };
 
     // A missing key is an invitation to invent one. Every status is present
     // and every count is a real zero.
-    expect(e.accountData.opportunityGrades.total).toBe(0);
-    expect(e.accountData.leadsByStatus.NEW).toBe(0);
-    expect(Object.keys(e.accountData.leadsByStatus).length).toBeGreaterThan(3);
+    expect(e.accountData.ticketsByStatus.NEW).toBe(0);
+    expect(Object.keys(e.accountData.ticketsByStatus).length).toBeGreaterThan(3);
+    expect(e.accountData.deliverables.total).toBe(0);
+    expect(e.accountData.automation.jobs.PENDING).toBe(0);
   });
 
   it('reports the account\'s real leads', async () => {

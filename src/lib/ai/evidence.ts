@@ -249,17 +249,82 @@ async function sourceMix(userId: string) {
  * as blind as every agent used to be until it is given a source here.
  */
 const SOURCES: Record<string, (userId: string) => Promise<Evidence>> = {
-  async ANALYST(userId) {
-    const [funnel, grades, sites, approvals, used] = await Promise.all([
+  /** What the line already holds, so intake does not re-accept known work. */
+  async INTAKE(userId) {
+    const [queue, funnel] = await Promise.all([
+      queueState(userId),
       leadFunnel(userId),
-      gradeCounts(userId),
+    ]);
+    return { automation: { jobs: queue.jobs }, ticketsByStatus: funnel };
+  },
+
+  async ARCHITECT(userId) {
+    return { deliverables: await siteState(userId) };
+  },
+
+  async DEVELOPER(userId) {
+    return { deliverables: await siteState(userId) };
+  },
+
+  async INTEGRATOR(userId) {
+    return { automation: await queueState(userId) };
+  },
+
+  /** Security reads what has been delivered and what failed on the way. */
+  async SECURITY(userId) {
+    const [queue, approvals] = await Promise.all([
+      queueState(userId),
+      approvalState(userId),
+    ]);
+    return { automation: queue, approvals };
+  },
+
+  async QA(userId) {
+    const [queue, sites] = await Promise.all([
+      queueState(userId),
+      siteState(userId),
+    ]);
+    return { automation: queue, deliverables: sites };
+  },
+
+  async ANALYST(userId) {
+    const [funnel, queue, sites, approvals, used] = await Promise.all([
+      leadFunnel(userId),
+      queueState(userId),
       siteState(userId),
       approvalState(userId),
       usage(userId),
     ]);
-    return { leadsByStatus: funnel, opportunityGrades: grades, sites, approvals, usage: used };
+    return {
+      ticketsByStatus: funnel,
+      automation: queue,
+      deliverables: sites,
+      approvals,
+      usage: used,
+    };
   },
 
+  async DEVOPS(userId) {
+    return { automation: await queueState(userId) };
+  },
+
+  async DOCS(userId) {
+    return { deliverables: await siteState(userId) };
+  },
+
+  /** Delivery must see what is waiting on the owner before it packages more. */
+  async DELIVERY(userId) {
+    const [approvals, sites] = await Promise.all([
+      approvalState(userId),
+      siteState(userId),
+    ]);
+    return { approvals, deliverables: sites };
+  },
+
+  // Retired consultancy roles. An account provisioned before the pivot still
+  // has AgentConfig rows naming these, and an agent with no source here is
+  // blind rather than broken — but blind is what the evidence layer exists to
+  // end, so they keep their slices until no rows remain.
   async SALES(userId) {
     const [top, funnel, approvals] = await Promise.all([
       topLeads(userId),
@@ -283,8 +348,6 @@ const SOURCES: Record<string, (userId: string) => Promise<Evidence>> = {
       sourceMix(userId),
       gradeCounts(userId),
     ]);
-    // Knowing what is already imported is what stops a scan proposing the
-    // ground it has already covered.
     return { alreadyImportedBySource: mix, opportunityGrades: grades };
   },
 

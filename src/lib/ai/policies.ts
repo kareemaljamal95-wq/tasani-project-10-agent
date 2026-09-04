@@ -28,7 +28,25 @@ export interface PolicyInput {
  * still runs, but its result cannot be autonomous.
  */
 const MICRO_BUDGET_USD: Record<string, number> = {
-  CEO: 0, // strategic decisions always go to a human
+  // The production line. Ceilings are low by design: this factory delivers
+  // code, and a proposal carrying real money escalates to the owner rather
+  // than being spent by a role whose job is to write a file.
+  INTAKE: 0, // accepts priced work; never sets or negotiates a price itself
+  ARCHITECT: 50,
+  DEVELOPER: 50,
+  INTEGRATOR: 50,
+  SECURITY: 50,
+  QA: 50,
+  ANALYST: 50,
+  DEVOPS: 50,
+  DOCS: 50,
+  DELIVERY: 0, // handover leaves the company, so it is always the owner's call
+
+  // Retired consultancy roles, kept only so an account provisioned before the
+  // pivot keeps working. An AgentConfig row still names one of these, and
+  // without an entry here evaluatePolicy blocks it as "Unknown agent" — a
+  // silent break for an existing customer. Remove once no rows remain.
+  CEO: 0,
   SALES: 250,
   SUPPORT: 100,
   CUSTOMER_SUPPORT: 100,
@@ -37,12 +55,7 @@ const MICRO_BUDGET_USD: Record<string, number> = {
   RESEARCH: 50,
   FINANCE: 0,
   OPERATIONS: 200,
-  // Advisory roles. Neither sends anything or moves money, so a report or a
-  // candidate list comes back without a click per item; an attached amount
-  // above the ceiling still escalates. An agent type missing from this map is
-  // blocked outright, so a new type must be added here to work at all.
   DISCOVERY: 50,
-  ANALYST: 50,
   STRATEGIST: 50,
 };
 
