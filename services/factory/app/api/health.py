@@ -38,6 +38,9 @@ async def health() -> dict:
             # Not cosmetic: the QA gate is decided by a real exit code, so
             # without this the line reaches review and holds every ticket.
             "execution": cfg.sandbox_configured,
+            # False means /tickets is closed to everyone, including you — the
+            # release gate cannot be worked, which is the safe direction.
+            "owner_gate": cfg.owner_gate_ready,
             "payments": cfg.can_receive_payment,
             "payments_environment": cfg.PAYPAL_ENVIRONMENT,
             "delivery_webhook": cfg.can_deliver,

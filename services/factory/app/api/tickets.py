@@ -2,14 +2,41 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import select
 
 from ..config import settings
 from ..db import Session, Ticket, TicketState, audit
 from ..payments import paypal
+from ..security import verify_owner
 
-router = APIRouter(prefix="/tickets", tags=["tickets"])
+async def require_owner(
+    x_tasami_owner_key: str | None = Header(default=None),
+) -> None:
+    """Every route here is the owner's, including the reads.
+
+    Applied to the router rather than to `release` alone: a ticket's artifacts
+    are the generated source, and `GET /tickets/{id}` would otherwise serve
+    delivered work to anyone who can count. Release is the dangerous one, but
+    it is not the only one worth a key.
+    """
+    cfg = settings()
+
+    if not cfg.owner_gate_ready:
+        # Refuses rather than opening. An unset key is a misconfiguration, and
+        # the only safe reading of it is "nobody is authorised yet".
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "OWNER_API_KEY is not configured; /tickets is closed until it is.",
+        )
+
+    if not verify_owner(cfg.OWNER_API_KEY, x_tasami_owner_key):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid owner key.")
+
+
+router = APIRouter(
+    prefix="/tickets", tags=["tickets"], dependencies=[Depends(require_owner)]
+)
 
 
 @router.get("")

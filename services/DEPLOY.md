@@ -28,6 +28,7 @@ model-written code, and no misconfiguration can merge them.
 |---|---|---|
 | `DATABASE_URL` | `postgresql+asyncpg://…` from the Northflank addon | yes |
 | `INGEST_WEBHOOK_SECRET` | `openssl rand -hex 32` | yes |
+| `OWNER_API_KEY` | `openssl rand -hex 32` | yes — `/tickets` is closed without it |
 | `SANDBOX_URL` | `http://sandbox:8080` (internal DNS) | for execution |
 | `SANDBOX_SECRET` | same value as the sandbox group | for execution |
 | `OPENAI_API_KEY` | `sk-…` | one of the two |
@@ -103,9 +104,11 @@ If it shows the refusal instead, the policy is not applied yet.
 5. **Check the sandbox** — `/health` must report `executes: true` with
    `egress verified closed`.
 6. **Check the factory** — `/health` must report `database: true`,
-   `model_provider: true`, `ingest_gate: true`, and `execution: true`. With
-   `execution: false` the line still runs, reaches review, and holds every
-   ticket, because it will not pass work it never executed.
+   `model_provider: true`, `ingest_gate: true`, `execution: true`, and
+   `owner_gate: true`. With `execution: false` the line still runs, reaches
+   review, and holds every ticket, because it will not pass work it never
+   executed. With `owner_gate: false` nobody can work the release gate —
+   including you.
 7. **Send one ticket** to `POST /webhooks/tickets`, signed as below. It should
    come back `202` with a ticket id, and reach `AWAITING_APPROVAL` within a
    few minutes.
@@ -128,6 +131,74 @@ curl -X POST https://<factory-web-domain>/webhooks/tickets \
   -H "x-tasami-signature: $SIG" \
   -d "$BODY"
 ```
+
+---
+
+## Working the approval gate
+
+Two different doors, and they take different credentials — a signature is not
+interchangeable with a key here.
+
+| Door | Who knocks | Credential |
+|---|---|---|
+| `POST /webhooks/tickets` | a machine, unattended | HMAC signature (`INGEST_WEBHOOK_SECRET`) |
+| `GET`/`POST /tickets/…` | you, by hand | static header (`OWNER_API_KEY`) |
+
+Set these once per shell. `history -d` afterwards, or prefix each command with a
+space if your shell is set to ignore those lines:
+
+```bash
+FACTORY=https://<factory-web-domain>
+OWNER_KEY=<OWNER_API_KEY>
+```
+
+### 1. See what is waiting for you
+
+```bash
+curl -s "$FACTORY/tickets?state=AWAITING_APPROVAL" \
+  -H "x-tasami-owner-key: $OWNER_KEY"
+```
+
+### 2. Read one before releasing it
+
+`artifacts` holds every role's output, including the generated source and the
+sandbox's real exit code. This is the step the gate exists for — releasing
+without it is the same as having no gate.
+
+```bash
+curl -s "$FACTORY/tickets/<id>" \
+  -H "x-tasami-owner-key: $OWNER_KEY"
+```
+
+### 3. Release it
+
+```bash
+curl -s -X POST "$FACTORY/tickets/<id>/release" \
+  -H "x-tasami-owner-key: $OWNER_KEY"
+```
+
+Returns `{"released": true, …}` with a `payment` block when PayPal is
+configured and the ticket is priced above zero. Then the ticket is `DELIVERED`.
+
+**Responses worth recognising:**
+
+| Code | Meaning |
+|---|---|
+| `401` | wrong or missing `x-tasami-owner-key` |
+| `404` | no such ticket id |
+| `409` | the ticket is not `AWAITING_APPROVAL`; only that state can be released |
+| `503` | `OWNER_API_KEY` is unset, so `/tickets` is closed to everyone |
+
+Both doors answer `401`, so read the path before the code: a `401` from
+`/webhooks/tickets` is a bad signature or a timestamp outside the five-minute
+window, and a `401` from `/tickets` is the owner key.
+
+A `409` is usually `HELD` or `FAILED_REVIEW` rather than a fault — read
+`state_reason` in the listing. `HELD` with "Code was not executed" means the
+sandbox was unreachable, not that the work is bad.
+
+There is no "un-release". Delivery announces the package outward and opens a
+receivable, so step 2 is not optional politeness.
 
 ---
 

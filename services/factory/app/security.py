@@ -30,6 +30,20 @@ def sign(secret: str, timestamp: str, body: bytes) -> str:
     return mac.hexdigest()
 
 
+def verify_owner(secret: str, presented: str | None) -> bool:
+    """The owner's key on /tickets.
+
+    A static key rather than a signature: these calls are made by a person with
+    curl, and a scheme that cannot be used by hand is a scheme that gets left
+    off. compare_digest for the same reason as below — a key checked with `==`
+    is a key leaked one byte at a time.
+    """
+    if not secret or not presented:
+        return False
+
+    return hmac.compare_digest(secret, presented.strip())
+
+
 def verify(secret: str, timestamp: str | None, signature: str | None, body: bytes) -> bool:
     if not secret or not timestamp or not signature:
         return False

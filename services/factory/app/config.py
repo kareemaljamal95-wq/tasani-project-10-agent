@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     # rejected — the unattended door stays shut rather than defaulting open.
     INGEST_WEBHOOK_SECRET: str
 
+    # The owner's key for /tickets. Not required at boot, because a running
+    # service must not be knocked over by adding a variable; unset instead
+    # makes every /tickets route answer 503 and say why. Refusing to serve is
+    # the safe default here — the release route hands work to a paying customer
+    # and opens a receivable, and it is reachable from the public domain.
+    OWNER_API_KEY: str = ""
+
     # Where a finished package is announced. Empty disables delivery entirely;
     # it never falls back to "send anywhere".
     DELIVERY_WEBHOOK_URL: str = ""
@@ -70,6 +77,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "INGEST_WEBHOOK_SECRET",
+        "OWNER_API_KEY",
         "PAYPAL_CLIENT_ID",
         "PAYPAL_CLIENT_SECRET",
         "PAYPAL_WEBHOOK_ID",
@@ -104,6 +112,10 @@ class Settings(BaseSettings):
             if self.PAYPAL_ENVIRONMENT == "production"
             else "https://api-m.sandbox.paypal.com"
         )
+
+    @property
+    def owner_gate_ready(self) -> bool:
+        return bool(self.OWNER_API_KEY)
 
     @property
     def sandbox_configured(self) -> bool:
