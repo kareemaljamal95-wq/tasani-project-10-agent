@@ -32,13 +32,29 @@ class Settings(BaseSettings):
     # being a crash loop.
     SANDBOX_NETWORK_POLICY: Literal["blocked-at-platform", "allowed", ""] = ""
 
-    SANDBOX_TIMEOUT_SECONDS: int = Field(default=60, ge=1, le=900)
-    SANDBOX_MEMORY_MB: int = Field(default=512, ge=64, le=8192)
-    SANDBOX_CPU_SECONDS: int = Field(default=45, ge=1, le=900)
+    SANDBOX_TIMEOUT_SECONDS: int = Field(default=120, ge=1, le=900)
+
+    # Sized for a data run, not a source tree. Reading a 25 MB CSV into pandas
+    # costs several times the file in RAM — string columns especially — so a
+    # 512 MB ceiling turns an ordinary spreadsheet into an opaque MemoryError.
+    SANDBOX_MEMORY_MB: int = Field(default=1024, ge=64, le=8192)
+    SANDBOX_CPU_SECONDS: int = Field(default=90, ge=1, le=900)
+
     SANDBOX_MAX_OUTPUT_BYTES: int = Field(default=200_000, ge=1_000)
-    SANDBOX_MAX_FILE_BYTES: int = Field(default=1_000_000, ge=1_000)
+    SANDBOX_MAX_FILE_BYTES: int = Field(default=25_000_000, ge=1_000)
+
+    # Stated rather than derived. It used to be MAX_FILE_BYTES * 10 in two
+    # places, which meant raising the per-file cap silently raised the disk
+    # ceiling and the RLIMIT_FSIZE with it.
+    SANDBOX_MAX_TOTAL_BYTES: int = Field(default=100_000_000, ge=1_000)
+
     SANDBOX_MAX_FILES: int = Field(default=200, ge=1, le=5_000)
     SANDBOX_MAX_CONCURRENT: int = Field(default=2, ge=1, le=16)
+
+    # What a run may send back when the caller asks for its output. Separate
+    # from MAX_OUTPUT_BYTES, which bounds stdout/stderr: a cleaned file is the
+    # deliverable and is legitimately far larger than a log.
+    SANDBOX_MAX_COLLECT_BYTES: int = Field(default=50_000_000, ge=1_000)
 
     @field_validator("SANDBOX_SECRET", mode="before")
     @classmethod

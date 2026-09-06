@@ -56,6 +56,18 @@ class TicketState(str, enum.Enum):
     DELIVERED = "DELIVERED"
 
 
+class TaskKind(str, enum.Enum):
+    """What kind of work a ticket is.
+
+    Stored on the ticket rather than inferred from the brief: the same sentence
+    can describe either job, and a line that guesses will eventually run a
+    Pandas prompt over a web-app ticket and call the result a delivery.
+    """
+
+    TECHNICAL_CODE = "technical_code"
+    BULK_DATA_CSV = "bulk_data_csv"
+
+
 class JobState(str, enum.Enum):
     PENDING = "PENDING"
     RUNNING = "RUNNING"
@@ -79,6 +91,23 @@ class Ticket(Base):
 
     title: Mapped[str] = mapped_column(String(500))
     brief: Mapped[str] = mapped_column(Text)
+
+    # Which line this ticket runs down. Defaulted at the column so a row
+    # written before this existed reads as code work rather than as null.
+    kind: Mapped[TaskKind] = mapped_column(
+        # values_callable, or SQLAlchemy stores the member *names*
+        # (TECHNICAL_CODE) while the API speaks values (technical_code). The
+        # existing enums never noticed because their names and values match.
+        Enum(TaskKind, name="task_kind", values_callable=lambda e: [m.value for m in e]),
+        default=TaskKind.TECHNICAL_CODE,
+        server_default=TaskKind.TECHNICAL_CODE.value,
+        index=True,
+    )
+
+    # Uploaded source files for a data task, base64-encoded. Held on the ticket
+    # so the run is reproducible from the row alone — re-running a ticket after
+    # a sandbox outage must not depend on the sender still having the file.
+    inputs: Mapped[list] = mapped_column(JSONB, default=list)
 
     # Integer minor units, as on the main platform. A float here becomes a
     # rounding argument with a customer.
@@ -155,9 +184,34 @@ _engine = create_async_engine(settings().DATABASE_URL, pool_pre_ping=True, echo=
 Session = async_sessionmaker(_engine, expire_on_commit=False)
 
 
+# create_all creates missing tables and nothing else — it will not add a column
+# to a table that already exists, and it will not create an enum type whose
+# table it skipped. A deployment that already ran would therefore accept the
+# new fields in Python and fail on every insert. These statements are additive,
+# idempotent, and safe to run on every boot.
+_ADDITIVE: tuple[str, ...] = (
+    """
+    DO $$
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'task_kind') THEN
+            CREATE TYPE task_kind AS ENUM ('technical_code', 'bulk_data_csv');
+        END IF;
+    END $$;
+    """,
+    "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS kind task_kind "
+    "NOT NULL DEFAULT 'technical_code'",
+    "ALTER TABLE tickets ADD COLUMN IF NOT EXISTS inputs jsonb "
+    "NOT NULL DEFAULT '[]'::jsonb",
+)
+
+
 async def init_models() -> None:
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+        # After create_all, so the table is guaranteed to exist on a first boot.
+        for statement in _ADDITIVE:
+            await conn.execute(text(statement))
 
 
 CLAIM_SQL = text(

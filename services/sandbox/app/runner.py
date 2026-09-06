@@ -39,11 +39,14 @@ log = logging.getLogger(__name__)
 # Only these may be launched. An allowlist rather than a shell string: with a
 # shell, `python -c 'x' ; curl evil` is one run, and the second half is
 # invisible to every check above it.
+# Only what the image can actually run. `node` and `npm-test` were here over a
+# python:3.12-slim base, so every Node run died with FileNotFoundError inside
+# the spawn — a 500 from the sandbox rather than a failed test, and nothing in
+# the message said the interpreter was simply absent. An allowlist naming
+# things that do not exist is a worse lie than a short allowlist.
 COMMANDS: dict[str, list[str]] = {
     "python": ["python3"],
     "pytest": ["python3", "-m", "pytest", "-q", "--color=no"],
-    "node": ["node"],
-    "npm-test": ["npm", "test", "--silent"],
 }
 
 
@@ -75,7 +78,7 @@ def _apply_limits() -> None:
     cpu = cfg.SANDBOX_CPU_SECONDS
     resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu))
 
-    fsize = cfg.SANDBOX_MAX_FILE_BYTES * 10
+    fsize = cfg.SANDBOX_MAX_TOTAL_BYTES
     resource.setrlimit(resource.RLIMIT_FSIZE, (fsize, fsize))
 
     # Caps fork bombs. Per-user on Linux, so the sandbox runs as its own uid.
@@ -126,16 +129,30 @@ async def execute(workspace: Workspace, command: str, args: list[str]) -> RunRes
     argv = [*COMMANDS[command], *args]
     started = time.monotonic()
 
-    proc = await asyncio.create_subprocess_exec(
-        *argv,
-        cwd=str(workspace.root),
-        env=minimal_env(),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        stdin=asyncio.subprocess.DEVNULL,
-        preexec_fn=_apply_limits,  # noqa: PLW1509 — deliberate; see _apply_limits
-        start_new_session=True,
-    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            cwd=str(workspace.root),
+            env=minimal_env(),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            stdin=asyncio.subprocess.DEVNULL,
+            preexec_fn=_apply_limits,  # noqa: PLW1509 — deliberate; see _apply_limits
+            start_new_session=True,
+        )
+    except (FileNotFoundError, PermissionError) as exc:
+        # The interpreter is missing from the image. Returned as a failed run
+        # naming the cause, not raised as a 500: the caller needs to be able to
+        # tell "the image lacks this" from "the code is broken".
+        return RunResult(
+            ok=False,
+            exit_code=None,
+            stdout="",
+            stderr=f"Cannot execute {command!r}: {exc}",
+            duration_ms=int((time.monotonic() - started) * 1000),
+            timed_out=False,
+            truncated=False,
+        )
 
     cap = cfg.SANDBOX_MAX_OUTPUT_BYTES // 2
     timed_out = False

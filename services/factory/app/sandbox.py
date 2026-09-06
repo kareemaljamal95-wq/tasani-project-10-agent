@@ -16,7 +16,8 @@ import hmac
 import json
 import logging
 import time
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 
 import httpx
 
@@ -37,6 +38,28 @@ class ExecutionResult:
     stderr: str
     timed_out: bool
     duration_ms: int
+    # What the run wrote, when it was asked to collect. Empty otherwise —
+    # never absent, so a caller cannot mistake "not requested" for "wrote
+    # nothing".
+    files: dict[str, str] = field(default_factory=dict)
+
+
+def _as_file(path: str, value: str | Mapping[str, str]) -> dict[str, str]:
+    """Normalise a file into the wire shape.
+
+    A plain string is source text. A mapping carries its own encoding, which is
+    how a binary xlsx crosses a JSON boundary at all — utf-8 decoding it would
+    corrupt it silently, and the corruption only surfaces when the customer
+    opens the delivered file.
+    """
+    if isinstance(value, str):
+        return {"path": path, "content": value, "encoding": "utf8"}
+
+    return {
+        "path": path,
+        "content": value["content"],
+        "encoding": value.get("encoding", "utf8"),
+    }
 
 
 def _sign(secret: str, timestamp: str, body: bytes) -> str:
@@ -48,7 +71,11 @@ def _sign(secret: str, timestamp: str, body: bytes) -> str:
 
 
 async def run(
-    files: dict[str, str], command: str, args: list[str]
+    files: Mapping[str, str | Mapping[str, str]],
+    command: str,
+    args: list[str],
+    *,
+    collect: bool = False,
 ) -> ExecutionResult:
     """Execute files in the sandbox and return what happened.
 
@@ -66,9 +93,10 @@ async def run(
 
     payload = json.dumps(
         {
-            "files": [{"path": p, "content": c} for p, c in files.items()],
+            "files": [_as_file(p, v) for p, v in files.items()],
             "command": command,
             "args": args,
+            "collect": collect,
         }
     ).encode()
 
@@ -106,4 +134,5 @@ async def run(
         stderr=str(body.get("stderr", ""))[:20_000],
         timed_out=bool(body.get("timed_out")),
         duration_ms=int(body.get("duration_ms", 0)),
+        files=dict(body.get("files") or {}),
     )

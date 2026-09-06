@@ -46,10 +46,14 @@ model-written code, and no misconfiguration can merge them.
 |---|---|
 | `SANDBOX_SECRET` | same value as in `factory-secrets` |
 | `SANDBOX_NETWORK_POLICY` | `blocked-at-platform` |
-| `SANDBOX_TIMEOUT_SECONDS` | `60` |
-| `SANDBOX_MEMORY_MB` | `512` |
-| `SANDBOX_CPU_SECONDS` | `45` |
+| `SANDBOX_TIMEOUT_SECONDS` | `120` |
+| `SANDBOX_MEMORY_MB` | `1024` |
+| `SANDBOX_CPU_SECONDS` | `90` |
 | `SANDBOX_MAX_CONCURRENT` | `2` |
+
+The sandbox container needs **at least `SANDBOX_MEMORY_MB × SANDBOX_MAX_CONCURRENT`**
+of RAM — 2 GB at these values. Each run may take its full ceiling, and the
+platform kills the service for the sum, not the individual limit.
 
 **No model keys here, and no `DATABASE_URL`.** The sandbox needs neither, and
 anything present in its environment is one `os.environ` read away from
@@ -114,6 +118,27 @@ If it shows the refusal instead, the policy is not applied yet.
    few minutes.
 8. **Release it yourself** — `POST /tickets/{id}/release`. This is the step
    that never becomes automatic.
+
+### The two intakes
+
+Both are signed with `INGEST_WEBHOOK_SECRET` and both feed the same line. The
+`kind` on the ticket selects each role's briefing and decides what the sandbox
+runs.
+
+| Endpoint | Body | Sandbox runs |
+|---|---|---|
+| `POST /api/v1/tasks/code` | brief only | the test suite QA wrote |
+| `POST /api/v1/tasks/data` | brief + `files[]` | `clean.py`, then the checks against `output/` |
+| `POST /webhooks/tickets` | brief only | as `/tasks/code` — kept for senders already configured |
+
+A data task's files are base64 in `files[]`, each a plain name with no
+directory part; they land in `input/` inside the sandbox. The roles are shown
+only the first 25 lines of each file, never the whole thing — a bulk file of
+personal data is not sent to a model provider, and a model handed ten megabytes
+of rows will summarise them and be wrong.
+
+Upload ceiling is 20 MB of base64 per file, held below the sandbox's own 25 MB
+so a file accepted here is never one the sandbox will later refuse.
 
 ### Signing a test ticket
 

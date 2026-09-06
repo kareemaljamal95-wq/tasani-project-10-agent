@@ -16,17 +16,24 @@ Three refusals are built into the flow, and they are the point of it:
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 from typing import Any
 
 from ..config import settings
 from .. import sandbox
-from ..db import Ticket, TicketState
+from ..db import TaskKind, Ticket, TicketState
 from .llm import ModelOutputInvalid, ModelUnavailable, complete
 from .roster import Role, STAGES, roles_in
 
 log = logging.getLogger(__name__)
+
+# How much of an uploaded file the roles are shown. Enough to read a header and
+# see the shape of the rows; far short of enough to reason about the contents,
+# which is the sandbox's job.
+SAMPLE_BYTES = 8_000
+SAMPLE_LINES = 25
 
 
 class LineHalted(RuntimeError):
@@ -38,6 +45,37 @@ class LineHalted(RuntimeError):
         self.reason = reason
 
 
+def _sample_of(ticket: Ticket) -> dict[str, Any] | None:
+    """What the roles are shown of an uploaded file.
+
+    A sample, never the file. Two reasons, and both are load-bearing: a model
+    given ten megabytes of rows will summarise them and be wrong, and a bulk
+    file of personal data has no business being sent to a model provider at
+    all. The cleaning happens in the sandbox, where the whole file lives; the
+    model only ever sees enough to write the rules.
+    """
+    if not ticket.inputs:
+        return None
+
+    files = []
+    for entry in ticket.inputs:
+        raw = base64.b64decode(entry["content_b64"])
+        # Decoded as text only for the preview. A binary xlsx yields
+        # replacement characters here, which is why Intake is told to report
+        # the format rather than trust the preview's legibility.
+        head = raw[:SAMPLE_BYTES].decode("utf-8", errors="replace")
+        files.append(
+            {
+                "path": entry["path"],
+                "bytes": len(raw),
+                "first_lines": head.splitlines()[:SAMPLE_LINES],
+                "truncated": len(raw) > SAMPLE_BYTES,
+            }
+        )
+
+    return {"files": files, "note": "A sample of the head of each file, not the whole file."}
+
+
 def _task_for(role: Role, ticket: Ticket, artifacts: dict[str, Any]) -> str:
     """Build one role's input.
 
@@ -46,12 +84,14 @@ def _task_for(role: Role, ticket: Ticket, artifacts: dict[str, Any]) -> str:
     explicitly is cheaper than discovering it in production.
     """
     upstream = {k: artifacts[k] for k in role.reads if k in artifacts}
+    sample = _sample_of(ticket)
 
     return "\n".join(
         [
             "<ticket>",
             json.dumps(
                 {
+                    "task_type": ticket.kind.value,
                     "title": ticket.title,
                     "brief": ticket.brief,
                     "price_minor_units": ticket.price_minor,
@@ -61,6 +101,15 @@ def _task_for(role: Role, ticket: Ticket, artifacts: dict[str, Any]) -> str:
                 indent=2,
             ),
             "</ticket>",
+            *(
+                [
+                    "<input_sample>",
+                    json.dumps(sample, ensure_ascii=False, indent=2),
+                    "</input_sample>",
+                ]
+                if sample
+                else []
+            ),
             "<upstream_artifacts>",
             json.dumps(upstream, ensure_ascii=False, indent=2)
             if upstream
@@ -77,7 +126,9 @@ async def _run_role(
     async with sem:
         try:
             out = await complete(
-                role.prompt, _task_for(role, ticket, artifacts), temperature=role.temperature
+                role.prompt_for(ticket.kind),
+                _task_for(role, ticket, artifacts),
+                temperature=role.temperature,
             )
             return role.key, out
         except (ModelUnavailable, ModelOutputInvalid) as exc:
@@ -105,7 +156,7 @@ async def run_line(ticket: Ticket) -> dict[str, Any]:
         if stage == 0:
             _check_intake(artifacts, ticket)
         if stage == 3:
-            artifacts["EXECUTION"] = await _execute(artifacts)
+            artifacts["EXECUTION"] = await _execute(ticket, artifacts)
             _check_review(artifacts)
 
     _check_package(artifacts)
@@ -151,8 +202,21 @@ def _collect_files(artifacts: dict[str, Any]) -> dict[str, str]:
     return files
 
 
-async def _execute(artifacts: dict[str, Any]) -> dict[str, Any]:
-    """Run the tests for real.
+def _as_result(result: sandbox.ExecutionResult, **extra: Any) -> dict[str, Any]:
+    return {
+        "ran": True,
+        "ok": result.ok,
+        "exit_code": result.exit_code,
+        "timed_out": result.timed_out,
+        "duration_ms": result.duration_ms,
+        "stdout": result.stdout[-4_000:],
+        "stderr": result.stderr[-4_000:],
+        **extra,
+    }
+
+
+async def _execute(ticket: Ticket, artifacts: dict[str, Any]) -> dict[str, Any]:
+    """Run the work for real.
 
     This is what separates the line from a very confident conversation. QA
     reporting `pass: true` is a model's opinion about code it just read; an
@@ -163,6 +227,9 @@ async def _execute(artifacts: dict[str, Any]) -> dict[str, Any]:
 
     if not files:
         return {"ran": False, "reason": "the line produced no files to execute"}
+
+    if ticket.kind is TaskKind.BULK_DATA_CSV:
+        return await _execute_data(ticket, files)
 
     has_tests = any("test" in path.lower() for path in files)
 
@@ -178,16 +245,68 @@ async def _execute(artifacts: dict[str, Any]) -> dict[str, Any]:
         # is how unverified code ships as verified.
         return {"ran": False, "reason": str(exc)}
 
-    return {
-        "ran": True,
-        "ok": result.ok,
-        "exit_code": result.exit_code,
-        "timed_out": result.timed_out,
-        "duration_ms": result.duration_ms,
-        "stdout": result.stdout[-4_000:],
-        "stderr": result.stderr[-4_000:],
-        "tests_present": has_tests,
+    return _as_result(result, tests_present=has_tests)
+
+
+async def _execute_data(ticket: Ticket, files: dict[str, str]) -> dict[str, Any]:
+    """Clean the file, then check what came out.
+
+    Two runs rather than one, in this order, because QA's assertions load
+    `output/` — running them together means the checks either race the cleaner
+    or assert against files that do not exist yet.
+
+    The uploaded file is added here and nowhere earlier: it travels from the
+    ticket row to the sandbox without passing through a model.
+    """
+    inputs = {
+        f"input/{entry['path']}": {"content": entry["content_b64"], "encoding": "base64"}
+        for entry in ticket.inputs
     }
+
+    if not inputs:
+        return {"ran": False, "reason": "a data ticket arrived with no input files"}
+
+    script = {p: c for p, c in files.items() if "test" not in p.lower()}
+    tests = {p: c for p, c in files.items() if "test" in p.lower()}
+
+    if "clean.py" not in script:
+        return {"ran": False, "reason": "the line produced no clean.py to run"}
+
+    try:
+        cleaned = await sandbox.run(
+            {**script, **inputs}, "python", ["clean.py"], collect=True
+        )
+    except sandbox.SandboxUnavailable as exc:
+        return {"ran": False, "reason": str(exc)}
+
+    if not cleaned.ok:
+        return _as_result(cleaned, phase="clean", tests_present=bool(tests))
+
+    produced = {p: c for p, c in cleaned.files.items() if p.startswith("output/")}
+
+    if not produced:
+        # A clean exit that wrote nothing is the most misleading result
+        # available: every gate above reads exit 0 as success.
+        return _as_result(
+            cleaned,
+            phase="clean",
+            ok=False,
+            failure="clean.py exited 0 but wrote nothing to output/",
+        )
+
+    if not tests:
+        return _as_result(cleaned, phase="clean", tests_present=False, outputs=sorted(produced))
+
+    try:
+        checked = await sandbox.run(
+            {**script, **tests, **inputs, **produced}, "pytest", ["tests"]
+        )
+    except sandbox.SandboxUnavailable as exc:
+        return {"ran": False, "reason": str(exc)}
+
+    return _as_result(
+        checked, phase="verify", tests_present=True, outputs=sorted(produced)
+    )
 
 
 def _check_review(artifacts: dict[str, Any]) -> None:

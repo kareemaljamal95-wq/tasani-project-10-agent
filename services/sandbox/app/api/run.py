@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, Header, Request, Response, status
 from fastapi.responses import JSONResponse
@@ -33,6 +34,7 @@ def _semaphore() -> asyncio.Semaphore:
 class FileIn(BaseModel):
     path: str = Field(min_length=1, max_length=400)
     content: str
+    encoding: Literal["utf8", "base64"] = "utf8"
 
 
 class RunIn(BaseModel):
@@ -78,7 +80,10 @@ async def run(
         with Workspace() as ws:
             try:
                 written = ws.write(
-                    [SourceFile(path=f.path, content=f.content) for f in payload.files]
+                    [
+                        SourceFile(path=f.path, content=f.content, encoding=f.encoding)
+                        for f in payload.files
+                    ]
                 )
             except (UnsafePath, WorkspaceTooLarge) as exc:
                 # Refused before anything ran. Reported to the caller because
@@ -89,7 +94,7 @@ async def run(
                 )
 
             result = await execute(ws, payload.command, payload.args)
-            produced = ws.collect(cfg.SANDBOX_MAX_OUTPUT_BYTES) if payload.collect else {}
+            produced = ws.collect(cfg.SANDBOX_MAX_COLLECT_BYTES) if payload.collect else {}
 
     return {
         "ok": result.ok,

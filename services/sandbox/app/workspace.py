@@ -8,6 +8,8 @@ before anything is written — after a write it is already too late.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import os
 import shutil
 import tempfile
@@ -29,6 +31,19 @@ class WorkspaceTooLarge(ValueError):
 class SourceFile:
     path: str
     content: str
+    # "utf8" for source text, "base64" for anything binary. A spreadsheet is
+    # not text, and utf-8 decoding one produces a file that still opens, still
+    # looks plausible, and is wrong in every cell that held a non-ASCII byte.
+    encoding: str = "utf8"
+
+    def decode(self) -> bytes:
+        if self.encoding == "base64":
+            try:
+                return base64.b64decode(self.content, validate=True)
+            except (binascii.Error, ValueError) as exc:
+                raise UnsafePath(f"{self.path}: not valid base64") from exc
+
+        return self.content.encode("utf-8")
 
 
 def _safe_relative(raw: str) -> PurePosixPath:
@@ -82,12 +97,12 @@ class Workspace:
 
         for f in files:
             rel = _safe_relative(f.path)
-            data = f.content.encode("utf-8")
+            data = f.decode()
             total += len(data)
 
             if len(data) > cfg.SANDBOX_MAX_FILE_BYTES:
                 raise WorkspaceTooLarge(f"{f.path} exceeds the per-file limit.")
-            if total > cfg.SANDBOX_MAX_FILE_BYTES * 10:
+            if total > cfg.SANDBOX_MAX_TOTAL_BYTES:
                 raise WorkspaceTooLarge("Total workspace size exceeds the limit.")
 
             target = self.root / Path(*rel.parts)
@@ -105,13 +120,19 @@ class Workspace:
 
         return written
 
-    def collect(self, limit_bytes: int) -> dict[str, str]:
+    def collect(self, limit_bytes: int) -> dict[str, dict[str, str]]:
         """Read back what the run produced, bounded.
 
         A run that writes a gigabyte must not be able to push it through the
         response — the cap is applied while walking, not after.
+
+        Each file carries its own encoding. Text comes back as text so it stays
+        readable; anything that is not valid UTF-8 comes back base64 rather
+        than being decoded with replacement characters. A cleaned .xlsx is
+        binary, and a lossy round-trip here would corrupt the delivered file
+        between the cleaning run and the run that checks it.
         """
-        out: dict[str, str] = {}
+        out: dict[str, dict[str, str]] = {}
         budget = limit_bytes
 
         for path in sorted(self.root.rglob("*")):
@@ -123,7 +144,15 @@ class Workspace:
             except OSError:
                 continue
             budget -= len(data)
-            out[rel] = data.decode("utf-8", errors="replace")
+
+            try:
+                out[rel] = {"content": data.decode("utf-8"), "encoding": "utf8"}
+            except UnicodeDecodeError:
+                out[rel] = {
+                    "content": base64.b64encode(data).decode("ascii"),
+                    "encoding": "base64",
+                }
+
             if budget <= 0:
                 break
 

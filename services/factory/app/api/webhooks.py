@@ -11,6 +11,7 @@ from sqlalchemy import select
 from ..config import settings
 from ..db import Job, Session, Ticket, TicketState, audit
 from ..security import verify
+from .tasks import _parse
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["webhooks"])
@@ -48,7 +49,13 @@ async def ingest(
         # the secret, the timestamp or the digest was the problem.
         return Response(status_code=status.HTTP_401_UNAUTHORIZED)  # type: ignore[return-value]
 
-    payload = IncomingTicket.model_validate_json(raw)
+    # Hand-parsed, so a ValidationError here is an unhandled exception and a
+    # 500 unless it is caught: FastAPI only maps one to 422 for a body it
+    # declared itself. A sender told "server error" retries a payload that will
+    # never be accepted.
+    payload, invalid = _parse(IncomingTicket, raw)
+    if invalid is not None:
+        return invalid  # type: ignore[return-value]
 
     async with Session() as session, session.begin():
         existing = (
