@@ -38,6 +38,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 API = "https://spaceship.dev/api/v1"
+USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
 DOMAIN = os.getenv("SPACESHIP_DOMAIN", "karmaai.online")
 TIMEOUT = 30
 
@@ -67,6 +71,12 @@ def _call(method: str, path: str, body: dict | list | None = None) -> dict:
             "X-Api-Secret": secret,
             "Content-Type": "application/json",
             "Accept": "application/json",
+            # Without this urllib sends "Python-urllib/3.x", which Cloudflare
+            # in front of spaceship.dev rejects with error 1010 before the
+            # request reaches the API at all. The failure arrives as a 403 that
+            # reads exactly like a bad credential, which is the wrong thing to
+            # go and check.
+            "User-Agent": USER_AGENT,
         },
     )
 
