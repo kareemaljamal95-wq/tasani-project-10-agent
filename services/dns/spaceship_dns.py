@@ -153,6 +153,44 @@ def find(records: list[dict], name: str, rtype: str) -> list[dict]:
     ]
 
 
+# Never removed to make room for something else. Deleting one of these breaks
+# mail delivery or domain ownership, and neither failure is visible from a web
+# browser — the site looks fine while the email silently stops.
+PROTECTED = {"MX", "TXT", "NS", "SOA", "CAA", "SRV"}
+
+
+def _conflicts(records: list[dict], name: str, rtype: str) -> list[dict]:
+    """Records that must go before `name`/`rtype` can be written.
+
+    A CNAME cannot coexist with another record of the same name, which is why
+    writing one removes what is already there. That rule holds for a normal
+    subdomain and is catastrophically wrong at the apex.
+
+    This deleted a live domain's MX and SPF records. `@` is the name of the
+    CNAME, and it is equally the name of the MX and the SPF TXT, so "everything
+    sharing this name" swept up the mail configuration. An apex CNAME only
+    exists at all through flattening, and flattening is precisely the case
+    where it does coexist with MX and TXT.
+
+    So the exclusivity rule is applied only below the apex, and never to a
+    record type whose loss is invisible from a browser.
+    """
+    same_name = [r for r in records if (r.get("name") or "").lower() == name.lower()]
+
+    if name == "@":
+        # Apex: replace like with like and nothing else.
+        return [r for r in same_name if (r.get("type") or "").upper() == rtype]
+
+    if rtype == "CNAME":
+        return [
+            r
+            for r in same_name
+            if (r.get("type") or "").upper() not in PROTECTED
+        ]
+
+    return [r for r in same_name if (r.get("type") or "").upper() == rtype]
+
+
 def apply_record(
     name: str, rtype: str, value: str, ttl: int, confirm: bool, backup_dir: Path
 ) -> int:
@@ -170,15 +208,7 @@ def apply_record(
         print(f"unsupported type {rtype}", file=sys.stderr)
         return 2
 
-    # A CNAME cannot coexist with another record of the same name, so the
-    # existing one is removed explicitly rather than relying on the save call
-    # to overwrite it — behaviour the API does not document.
-    conflicts = [
-        r
-        for r in records
-        if (r.get("name") or "").lower() == name.lower()
-        and (rtype.upper() == "CNAME" or (r.get("type") or "").upper() == rtype.upper())
-    ]
+    conflicts = _conflicts(records, name, rtype.upper())
 
     print("\n--- change ---")
     for c in conflicts:
